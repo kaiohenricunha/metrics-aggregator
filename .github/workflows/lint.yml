@@ -1,19 +1,27 @@
 name: Lint & vuln scan
-on: [pull_request, push]
-permissions:
-  contents: read
+on:
+  pull_request:
+  push:
+    branches: [main]
 
 jobs:
-  analyze:
+  lint:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: {go-version-file: go.mod, cache: true}
-
-      - uses: golangci/golangci-lint-action@v4
         with:
-          version: v2.2.1
-          args: --timeout=5m
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install golangci-lint v2
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+            | sh -s -- -b $(go env GOPATH)/bin v2.2.1
+          golangci-lint --version
+
+      - name: Run golangci-lint
+        run: golangci-lint run --format=github --timeout=5m
 
       - uses: golang/govulncheck-action@v1
