@@ -1,0 +1,15 @@
+name: Lint & vuln scan
+on: [pull_request, push]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod, cache: true}
+
+      - uses: golangci/golangci-lint-action@v4
+        with: {timeout: 5m}
+
+      - uses: golang/govulncheck-action@v1
