@@ -1,0 +1,29 @@
+version: 2
+
+updates:
+  # ── ① Go dependencies ─────────────────────────────
+  - package-ecosystem: "gomod"
+    directory: "/"            # go.mod is in the repo root
+    schedule:
+      interval: "weekly"      # daily | weekly | monthly
+    # optional extras (uncomment if you like):
+    # commit-message:
+    #   prefix: "deps:"
+
+  # ── ② Docker base images in Dockerfile ────────────
+  - package-ecosystem: "docker"
+    directory: "/"            # looks for Dockerfile in /
+    schedule:
+      interval: "weekly"
+
+  # ── ③ Image tags in docker-compose.yaml ───────────
+  - package-ecosystem: "docker-compose"
+    directory: "/"            # compose file is in /
+    schedule:
+      interval: "weekly"
+
+  # ── ④ GitHub Actions used in your CI ──────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"            # Dependabot searches .github/workflows automatically
+    schedule:
+      interval: "weekly"
