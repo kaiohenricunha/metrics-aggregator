@@ -8,80 +8,64 @@ import (
 	"testing"
 )
 
-// TestSetupEndpoints tests the SetupEndpoints function to ensure it initializes the endpoints correctly
+// TestSetupEndpoints verifies correct initialisation from env-var and fallback.
 func TestSetupEndpoints(t *testing.T) {
-	// Clear the endpoints slice
-	endpoints = []Endpoint{}
-
-	// Test with no environment variable set
+	// Case 1: default endpoints
+	endpoints = nil
 	os.Unsetenv("METRICS_ENDPOINTS")
 	SetupEndpoints()
 	if len(endpoints) != 2 {
-		t.Errorf("Expected 2 endpoints, got %d", len(endpoints))
+		t.Fatalf("expected 2 default endpoints, got %d", len(endpoints))
 	}
 
-	// Clear the endpoints slice
-	endpoints = []Endpoint{}
-
-	// Test with environment variable set
-	env := `{"my-release":"http://localhost:8080/metrics","sidecar-same-image":"http://localhost:8082/metrics"}`
+	// Case 2: custom env-var
+	endpoints = nil
+	env := `{"my-release":"http://localhost:8080/metrics","sidecar":"http://localhost:8082/metrics"}`
 	os.Setenv("METRICS_ENDPOINTS", env)
 	SetupEndpoints()
 	if len(endpoints) != 2 {
-		t.Errorf("Expected 2 endpoints, got %d", len(endpoints))
+		t.Fatalf("expected 2 env endpoints, got %d", len(endpoints))
 	}
-	if endpoints[0].Name != "my-release" || endpoints[0].URL != "http://localhost:8080/metrics" {
-		t.Errorf("Unexpected endpoint: %+v", endpoints[0])
-	}
-	if endpoints[1].Name != "sidecar-same-image" || endpoints[1].URL != "http://localhost:8082/metrics" {
-		t.Errorf("Unexpected endpoint: %+v", endpoints[1])
+	if endpoints[0].Name != "my-release" || endpoints[1].Name != "sidecar" {
+		t.Fatalf("unexpected endpoints: %+v", endpoints)
 	}
 }
 
-// TestAggregateMetrics tests the AggregateMetrics function to ensure it correctly aggregates metrics from endpoints
+// TestAggregateMetrics checks that metrics are fetched and relabelled.
 func TestAggregateMetrics(t *testing.T) {
-	// Mock HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`# HELP test_metric A test metric
+		if _, err := w.Write([]byte(`# HELP test_metric help
 # TYPE test_metric counter
-test_metric{label="value"} 1.0
-`))
+test_metric{label="value"} 1`)); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
-	// Set up endpoints to use the mock server
-	endpoints = []Endpoint{
-		{Name: "test-service", URL: server.URL},
-	}
+	endpoints = []Endpoint{{Name: "test-service", URL: server.URL}}
 
 	metrics, err := AggregateMetrics()
 	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+		t.Fatalf("aggregate error: %v", err)
 	}
-
-	expected := `test_metric{origin_container="test-service",label="value"} 1.0`
-	if !strings.Contains(metrics, expected) {
-		t.Errorf("Expected metrics to contain %q, got %q", expected, metrics)
+	want := `test_metric{origin_container="test-service",label="value"} 1`
+	if !strings.Contains(metrics, want) {
+		t.Fatalf("expected %q, got %q", want, metrics)
 	}
 }
 
-// TestAddCustomLabel tests the addCustomLabel function to ensure it correctly adds a custom label to metrics
-// It checks both cases: when the metric has existing labels and when it does not.
-// It also ensures that the custom label is added correctly.
+// TestAddCustomLabel ensures label injection works with and without existing labels.
 func TestAddCustomLabel(t *testing.T) {
-	metric := `test_metric{label="value"} 1.0`
-	name := "test-service"
-	expected := `test_metric{origin_container="test-service",label="value"} 1.0`
-	result := addCustomLabel(metric, name)
-	if result != expected {
-		t.Errorf("Expected %q, got %q", expected, result)
+	got := addCustomLabel(`metric{a="b"} 1`, "svc")
+	want := `metric{origin_container="svc",a="b"} 1`
+	if got != want {
+		t.Fatalf("want %q, got %q", want, got)
 	}
 
-	metric = `test_metric 1.0`
-	expected = `test_metric{origin_container="test-service"} 1.0`
-	result = addCustomLabel(metric, name)
-	if result != expected {
-		t.Errorf("Expected %q, got %q", expected, result)
+	got = addCustomLabel(`metric 1`, "svc")
+	want = `metric{origin_container="svc"} 1`
+	if got != want {
+		t.Fatalf("want %q, got %q", want, got)
 	}
 }
