@@ -1,0 +1,27 @@
+project_name: metrics-aggregator
+
+# ────── build the CLI binaries ─────────────────────────
+builds:
+  - id: default
+    main: ./cmd/metrics-aggregator      # or ./main.go
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    env: [CGO_ENABLED=0]
+
+# ────── (optional) re-use the Docker image you already pushed ─
+dockers:
+  - image_templates:
+      - ghcr.io/{{ .Repo }}:{{ .Tag }}
+    use: buildx
+    skip_push: true        # Docker image already published in docker-publish.yml
+
+# ────── supply-chain extras ────────────────────────────
+sboms:           # Syft SBOMs
+  - id: default
+attestations:    # SLSA provenance
+  - predicate_type: https://slsa.dev/provenance/v1
+
+release:
+  github:
+    draft: false           # publish immediately
+    prerelease: auto       # “-rc” tags remain pre-releases
