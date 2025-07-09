@@ -1,0 +1,24 @@
+services:
+  aggregator:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - METRICS_ENDPOINTS=http://prometheus1:9090/metrics,http://prometheus2:9090/metrics
+    depends_on:
+      - prometheus1
+      - prometheus2
+
+  prometheus1:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus1.yml:/etc/prometheus/prometheus.yml
+
+  prometheus2:
+    image: prom/prometheus:latest
+    ports:
+      - "9092:9090"
+    volumes:
+      - ./prometheus2.yml:/etc/prometheus/prometheus.yml
