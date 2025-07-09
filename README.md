@@ -13,7 +13,7 @@ This microservice aggregates metrics from multiple containers and exposes them o
 
 1. Clone the repository:
     ```sh
-    git clone https://github.com/kaiohenricunha/metrics-aggregator.git
+    git clone git@github.com:kaiohenricunha/metrics-aggregator.git
     cd metrics-aggregator
     ```
 
