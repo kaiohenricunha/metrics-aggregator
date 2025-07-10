@@ -18,7 +18,8 @@ jobs:
       # 2 ── lint docker-compose.yaml with dockval
       - name: Lint compose file (dockval)
         run: |
-          pip install --quiet docker-compose-validator
+          curl -sSfL https://github.com/lucassabreu/dockval/releases/latest/download/dockval_$(uname -s)_$(uname -m).tar.gz \
+            | tar -xz -C /usr/local/bin dockval
           dockval docker-compose.yaml
 
       # 3 ── validate syntax & interpolations with native CLI
@@ -40,13 +41,11 @@ jobs:
             echo "waiting for aggregator…"; sleep 2
           done
           echo "Aggregator never came up"; exit 1
-
       # 6 ── probe Prometheus instances
       - name: Probe Prometheus instances
         run: |
           curl -f http://localhost:9091/-/healthy
           curl -f http://localhost:9092/-/healthy
-
       # 7 ── tear down (always runs, even on failure)
       - name: docker compose down
         if: always()
