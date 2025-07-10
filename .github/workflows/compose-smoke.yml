@@ -16,11 +16,12 @@ jobs:
       - uses: actions/checkout@v4
 
       # 2 ── lint docker-compose.yaml with dockval
-      - name: Lint compose file (dockval)
-        run: |
-          curl -sSfL https://github.com/lucassabreu/dockval/releases/latest/download/dockval_$(uname -s)_$(uname -m).tar.gz \
-            | tar -xz -C /usr/local/bin dockval
-          dockval docker-compose.yaml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Lint compose file
+        run: npx --yes docker-compose-validator docker-compose.yaml
 
       # 3 ── validate syntax & interpolations with native CLI
       - name: docker compose config
