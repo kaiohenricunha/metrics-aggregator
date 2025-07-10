@@ -29,6 +29,6 @@ jobs:
 
       # 4. Run the linter with the new flag name
       - name: Run golangci-lint
-        run: golangci-lint run --format=colored-line-number --timeout=5m
+        run: golangci-lint run --timeout=5m
 
       - uses: golang/govulncheck-action@v1
