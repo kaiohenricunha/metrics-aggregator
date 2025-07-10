@@ -1,0 +1,15 @@
+docs:
+  - "**/*.md"
+
+ci:
+  - ".github/workflows/**"
+
+docker:
+  - "Dockerfile"
+  - "docker-compose.yml"
+
+go:
+  - "**/*.go"
+
+prometheus:
+  - "prometheus*.yml"
