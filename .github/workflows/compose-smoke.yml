@@ -28,7 +28,7 @@ jobs:
       - name: Probe aggregator /metrics
         run: |
           for i in {1..10}; do
-            if curl -fs http://localhost:8080/metrics > /dev/null; then
+            if curl -fs http://localhost:9090/metrics > /dev/null; then
               echo "Aggregator is healthy"; exit 0
             fi
             echo "waiting for aggregator…"; sleep 2
