@@ -1,0 +1,47 @@
+name: Compose smoke test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  compose-test:
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # BuildKit for faster build cache
+      - uses: docker/setup-buildx-action@v3
+
+      # ① validate YAML
+      - name: docker compose config
+        run: docker compose -f docker-compose.yaml config
+
+      # ② spin everything up
+      - name: docker compose up
+        run: docker compose -f docker-compose.yaml up -d --wait
+
+      # ③ hit the aggregator endpoint
+      - name: Probe aggregator /metrics
+        run: |
+          for i in {1..10}; do
+            if curl -fs http://localhost:8080/metrics > /dev/null; then
+              echo "Aggregator is healthy"; exit 0
+            fi
+            echo "waiting for aggregator…"; sleep 2
+          done
+          echo "Aggregator never came up"; exit 1
+
+      # ④ check Prometheus instances
+      - name: Probe Prometheus instances
+        run: |
+          curl -f http://localhost:9091/-/healthy
+          curl -f http://localhost:9092/-/healthy
+
+      # ⑤ tear down
+      - name: docker compose down
+        if: always()
+        run: docker compose -f docker-compose.yaml down -v
