@@ -38,6 +38,6 @@ jobs:
 
       # ⑥ run Revive with default config (warn only)
       - name: Run Revive
-        run: revive -formatter friendly -config revive.toml ./...
+        run: revive -formatter friendly ./...
 
       - uses: golang/govulncheck-action@v1
