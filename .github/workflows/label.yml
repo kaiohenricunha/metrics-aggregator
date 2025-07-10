@@ -1,7 +1,7 @@
 name: Auto-label PR
 
-on:
-  pull_request_target:     # works for forks too
+# on:
+#   pull_request_target:     # works for forks too
 
 permissions:
   contents: read           # needed for checkout
