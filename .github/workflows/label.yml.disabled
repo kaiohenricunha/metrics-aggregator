@@ -1,0 +1,24 @@
+name: Auto-label PR
+
+on:
+  pull_request:
+
+permissions:
+  contents: read           # needed for checkout
+  pull-requests: write     # create / sync labels
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # labeler reads diff against base branch
+
+      - name: Run labeler
+        uses: actions/labeler@v4
+        with:
+          configuration-path: .github/labeler.yml   # default, but explicit
+          sync-labels: false
