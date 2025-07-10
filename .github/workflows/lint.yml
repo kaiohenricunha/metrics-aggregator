@@ -18,10 +18,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run golangci-lint v1.54.2
+      - name: Run golangci-lint v1.59.0
         uses: golangci/golangci-lint-action@v4
         with:
-          version: v1.54.2
+          version: v1.59.0
           args: --timeout=5m
 
       - uses: golang/govulncheck-action@v1
