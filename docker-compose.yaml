@@ -1,6 +1,9 @@
 services:
   aggregator:
-    build: .
+    build:
+      context: .
+      args:
+        GO_VERSION: ${GO_VERSION}
     ports:
       - "${AGG_PORT}:${AGG_PORT}"
     environment:

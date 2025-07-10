@@ -20,7 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1 ── write .env for Docker Compose -------------------------
+      # 0 ── extract Go version once
+      - name: Extract Go version
+        id: goversion
+        run: echo "GO_VERSION=$(grep '^go ' go.mod | cut -d' ' -f2)" >> "$GITHUB_ENV"
+
+      # 1 ── write .env for Compose
       - name: Create .env file
         run: |
           cat <<EOF > .env
@@ -28,8 +33,9 @@ jobs:
           PROM_PORT=${PROM_PORT}
           PROM1_EXT=${PROM1_EXT}
           PROM2_EXT=${PROM2_EXT}
+          GO_VERSION=${GO_VERSION}
           EOF
-          cat .env   # optional: show contents
+          cat .env
 
       - uses: docker/setup-buildx-action@v3
 
