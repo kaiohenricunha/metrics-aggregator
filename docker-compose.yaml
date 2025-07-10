@@ -1,53 +1,24 @@
-name: Compose smoke test
+services:
+  aggregator:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - METRICS_ENDPOINTS=http://prometheus1:9090/metrics,http://prometheus2:9090/metrics
+    depends_on:
+      - prometheus1
+      - prometheus2
 
-on:
-  pull_request:
-  push:
-    branches: [main]
+  prometheus1:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus1.yml:/etc/prometheus/prometheus.yml
 
-jobs:
-  compose-test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read          # checkout only
-
-    steps:
-      # 1 ── checkout repo
-      - uses: actions/checkout@v4
-
-      # 2 ── lint docker-compose.yaml with dockval
-      - name: Lint compose file (dockval)
-        run: |
-          pip install --quiet docker-compose-validator
-          dockval docker-compose.yaml
-
-      # 3 ── validate syntax & interpolations with native CLI
-      - name: docker compose config
-        run: docker compose -f docker-compose.yaml config
-
-      # 4 ── build & start all services
-      - uses: docker/setup-buildx-action@v3     # build cache / BuildKit
-      - name: docker compose up
-        run: docker compose -f docker-compose.yaml up -d --wait
-
-      # 5 ── probe aggregator
-      - name: Probe aggregator /metrics
-        run: |
-          for i in {1..10}; do
-            if curl -fs http://localhost:8080/metrics > /dev/null; then
-              echo "Aggregator is healthy"; exit 0
-            fi
-            echo "waiting for aggregator…"; sleep 2
-          done
-          echo "Aggregator never came up"; exit 1
-
-      # 6 ── probe Prometheus instances
-      - name: Probe Prometheus instances
-        run: |
-          curl -f http://localhost:9091/-/healthy
-          curl -f http://localhost:9092/-/healthy
-
-      # 7 ── tear down (always runs, even on failure)
-      - name: docker compose down
-        if: always()
-        run: docker compose -f docker-compose.yaml down -v
+  prometheus2:
+    image: prom/prometheus:latest
+    ports:
+      - "9092:9090"
+    volumes:
+      - ./prometheus2.yml:/etc/prometheus/prometheus.yml

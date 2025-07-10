@@ -8,23 +8,29 @@ on:
 jobs:
   compose-test:
     runs-on: ubuntu-latest
-    permissions: {contents: read}
+    permissions:
+      contents: read          # checkout only
 
     steps:
+      # 1 ── checkout repo
       - uses: actions/checkout@v4
 
-      # BuildKit for faster build cache
-      - uses: docker/setup-buildx-action@v3
+      # 2 ── lint docker-compose.yaml with dockval
+      - name: Lint compose file (dockval)
+        run: |
+          pip install --quiet docker-compose-validator
+          dockval docker-compose.yaml
 
-      # ① validate YAML
+      # 3 ── validate syntax & interpolations with native CLI
       - name: docker compose config
         run: docker compose -f docker-compose.yaml config
 
-      # ② spin everything up
+      # 4 ── build & start all services
+      - uses: docker/setup-buildx-action@v3     # build cache / BuildKit
       - name: docker compose up
         run: docker compose -f docker-compose.yaml up -d --wait
 
-      # ③ hit the aggregator endpoint
+      # 5 ── probe aggregator
       - name: Probe aggregator /metrics
         run: |
           for i in {1..10}; do
@@ -35,13 +41,13 @@ jobs:
           done
           echo "Aggregator never came up"; exit 1
 
-      # ④ check Prometheus instances
+      # 6 ── probe Prometheus instances
       - name: Probe Prometheus instances
         run: |
           curl -f http://localhost:9091/-/healthy
           curl -f http://localhost:9092/-/healthy
 
-      # ⑤ tear down
+      # 7 ── tear down (always runs, even on failure)
       - name: docker compose down
         if: always()
         run: docker compose -f docker-compose.yaml down -v
