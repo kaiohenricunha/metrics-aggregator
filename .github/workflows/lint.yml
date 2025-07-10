@@ -11,22 +11,24 @@ jobs:
     permissions:
       contents: read
     steps:
-      # 1 Check out code
+      # 1. Checkout
       - uses: actions/checkout@v4
 
-      # 2 Install Go 1.24 (taken from go.mod or hard-pin below)
+      # 2. Install Go 1.24 (or whatever is in go.mod)
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod   # <- go.mod should say `go 1.24`
-          # go-version: 1.24        # uncomment to hard-pin
+          go-version-file: go.mod   # go 1.24
           cache: true
 
-      # 3 Build and run golangci-lint compiled with Go 1.24
-      - name: Run golangci-lint v1.59.0
-        uses: golangci/golangci-lint-action@v4
-        with:
-          version: v1.59.0          # ≥1.55 supports Go 1.22+
-          install-mode: source      # compile with Go 1.24 on the runner
-          args: --timeout=5m        # action adds --out-format automatically
+      # 3. Build golangci-lint v1.59.0 from source with Go 1.24
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          golangci-lint --version
+
+      # 4. Run the linter with the new flag name
+      - name: Run golangci-lint
+        run: golangci-lint run --format=colored-line-number --timeout=5m
 
       - uses: golang/govulncheck-action@v1
