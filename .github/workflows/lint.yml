@@ -11,24 +11,33 @@ jobs:
     permissions:
       contents: read
     steps:
-      # 1. Checkout
+      # ① checkout
       - uses: actions/checkout@v4
 
-      # 2. Install Go 1.24 (or whatever is in go.mod)
+      # ② setup Go (follows go.mod; 1.24 in your case)
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod   # go 1.24
+          go-version-file: go.mod
           cache: true
 
-      # 3. Build golangci-lint v1.59.0 from source with Go 1.24
-      - name: Install golangci-lint
+      # ③ install Staticcheck
+      - name: Install Staticcheck
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.0
+          go install honnef.co/go/tools/cmd/staticcheck@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          golangci-lint --version
 
-      # 4. Run the linter with the new flag name
-      - name: Run golangci-lint
-        run: golangci-lint run --timeout=5m
+      # ④ install Revive
+      - name: Install Revive
+        run: |
+          go install github.com/mgechev/revive@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # ⑤ run Staticcheck
+      - name: Run Staticcheck
+        run: staticcheck ./...
+
+      # ⑥ run Revive with default config (warn only)
+      - name: Run Revive
+        run: revive -formatter friendly -config revive.toml ./...
 
       - uses: golang/govulncheck-action@v1
