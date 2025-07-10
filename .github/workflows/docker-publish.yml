@@ -33,6 +33,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Extract Go version
+        id: goversion
+        run: |
+          echo "version=$(grep '^go ' go.mod | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+
       - name: Install cosign
         if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@v3.5.0
@@ -66,6 +71,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            GO_VERSION=${{ steps.goversion.outputs.version }}
 
       - name: Sign the published Docker image
         if: ${{ github.event_name != 'pull_request' }}

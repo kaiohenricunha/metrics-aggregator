@@ -16,7 +16,6 @@ import (
 // centralised port definitions
 const (
 	DefaultAggregatorPort  = "9090"
-	DefaultPrometheusPort  = "9090"
 	metricsEnvVariableName = "METRICS_ENDPOINTS"
 )
 
