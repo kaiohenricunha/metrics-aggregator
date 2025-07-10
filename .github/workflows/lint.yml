@@ -11,17 +11,22 @@ jobs:
     permissions:
       contents: read
     steps:
+      # 1 Check out code
       - uses: actions/checkout@v4
 
+      # 2 Install Go 1.24 (taken from go.mod or hard-pin below)
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: go.mod   # <- go.mod should say `go 1.24`
+          # go-version: 1.24        # uncomment to hard-pin
           cache: true
 
+      # 3 Build and run golangci-lint compiled with Go 1.24
       - name: Run golangci-lint v1.59.0
         uses: golangci/golangci-lint-action@v4
         with:
-          version: v1.59.0
-          args: --timeout=5m
+          version: v1.59.0          # ≥1.55 supports Go 1.22+
+          install-mode: source      # compile with Go 1.24 on the runner
+          args: --timeout=5m        # action adds --out-format automatically
 
       - uses: golang/govulncheck-action@v1
