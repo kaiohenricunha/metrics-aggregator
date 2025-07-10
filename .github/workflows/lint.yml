@@ -14,13 +14,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Install the v2 binary into $HOME/bin
       - name: Install golangci-lint v2.2.1
         run: |
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
             | sh -s -- -b $HOME/bin v2.2.1
-          echo "$HOME/bin" >> "$GITHUB_PATH"   # visible to *next* steps
+          ls -l $HOME/bin   # debugging: shows golangci-lint
 
-      - name: Run golangci-lint
-        run: golangci-lint run --format=github --timeout=5m
+      # Call the binary with its absolute path
+      - name: Run golangci-lint v2
+        run: |
+          $HOME/bin/golangci-lint run --format=github-actions --timeout=5m
 
       - uses: golang/govulncheck-action@v1
