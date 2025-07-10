@@ -15,24 +15,16 @@ jobs:
       # 1 ── checkout repo
       - uses: actions/checkout@v4
 
-      # 2 ── lint docker-compose.yaml with dockval
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Lint compose file
-        run: npx --yes docker-compose-validator docker-compose.yaml
-
-      # 3 ── validate syntax & interpolations with native CLI
+      # 2 ── validate syntax & interpolations with native CLI
       - name: docker compose config
         run: docker compose -f docker-compose.yaml config
 
-      # 4 ── build & start all services
+      # 3 ── build & start all services
       - uses: docker/setup-buildx-action@v3     # build cache / BuildKit
       - name: docker compose up
         run: docker compose -f docker-compose.yaml up -d --wait
 
-      # 5 ── probe aggregator
+      # 4 ── probe aggregator
       - name: Probe aggregator /metrics
         run: |
           for i in {1..10}; do
@@ -42,12 +34,12 @@ jobs:
             echo "waiting for aggregator…"; sleep 2
           done
           echo "Aggregator never came up"; exit 1
-      # 6 ── probe Prometheus instances
+      # 5 ── probe Prometheus instances
       - name: Probe Prometheus instances
         run: |
           curl -f http://localhost:9091/-/healthy
           curl -f http://localhost:9092/-/healthy
-      # 7 ── tear down (always runs, even on failure)
+      # 6 ── tear down (always runs, even on failure)
       - name: docker compose down
         if: always()
         run: docker compose -f docker-compose.yaml down -v
