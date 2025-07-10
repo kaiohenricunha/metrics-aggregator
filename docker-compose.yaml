@@ -2,9 +2,10 @@ services:
   aggregator:
     build: .
     ports:
-      - "8080:8080"
+      - "${AGG_PORT}:${AGG_PORT}"
     environment:
-      - METRICS_ENDPOINTS=http://prometheus1:9090/metrics,http://prometheus2:9090/metrics
+      - METRICS_AGGREGATOR_PORT=${AGG_PORT}
+      - METRICS_ENDPOINTS={"prometheus1":"http://prometheus1:${PROM_PORT}/metrics","prometheus2":"http://prometheus2:${PROM_PORT}/metrics"}
     depends_on:
       - prometheus1
       - prometheus2
@@ -12,13 +13,17 @@ services:
   prometheus1:
     image: prom/prometheus:latest
     ports:
-      - "9091:9090"
+      - "${PROM1_EXT}:${PROM_PORT}"
+    environment:
+      - PROM_PORT=${PROM_PORT}
     volumes:
       - ./prometheus1.yml:/etc/prometheus/prometheus.yml
 
   prometheus2:
     image: prom/prometheus:latest
     ports:
-      - "9092:9090"
+      - "${PROM2_EXT}:${PROM_PORT}"
+    environment:
+      - PROM_PORT=${PROM_PORT}
     volumes:
       - ./prometheus2.yml:/etc/prometheus/prometheus.yml

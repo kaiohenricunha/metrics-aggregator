@@ -8,38 +8,43 @@ on:
 jobs:
   compose-test:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read          # checkout only
+    permissions: {contents: read}
 
     steps:
-      # 1 ── checkout repo
       - uses: actions/checkout@v4
 
-      # 2 ── validate syntax & interpolations with native CLI
+      # .env file makes the ports available to Compose
+      - name: Show env
+        run: cat .env
+
+      - uses: docker/setup-buildx-action@v3
+
       - name: docker compose config
-        run: docker compose -f docker-compose.yaml config
+        run: docker compose config
 
-      # 3 ── build & start all services
-      - uses: docker/setup-buildx-action@v3     # build cache / BuildKit
       - name: docker compose up
-        run: docker compose -f docker-compose.yaml up -d --wait
+        run: docker compose up -d --wait
 
-      # 4 ── probe aggregator
       - name: Probe aggregator /metrics
         run: |
           for i in {1..10}; do
-            if curl -fs http://localhost:9090/metrics > /dev/null; then
+            if curl -fs http://localhost:${{ env.AGG_PORT }}/metrics >/dev/null; then
               echo "Aggregator is healthy"; exit 0
             fi
-            echo "waiting for aggregator…"; sleep 2
+            echo "waiting…"; sleep 2
           done
           echo "Aggregator never came up"; exit 1
-      # 5 ── probe Prometheus instances
+        env:
+          AGG_PORT: ${{ env.AGG_PORT }}
+
       - name: Probe Prometheus instances
         run: |
-          curl -f http://localhost:9091/-/healthy
-          curl -f http://localhost:9092/-/healthy
-      # 6 ── tear down (always runs, even on failure)
+          curl -f http://localhost:${{ env.PROM1_EXT }}/-/healthy
+          curl -f http://localhost:${{ env.PROM2_EXT }}/-/healthy
+        env:
+          PROM1_EXT: ${{ env.PROM1_EXT }}
+          PROM2_EXT: ${{ env.PROM2_EXT }}
+
       - name: docker compose down
         if: always()
-        run: docker compose -f docker-compose.yaml down -v
+        run: docker compose down -v

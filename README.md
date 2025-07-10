@@ -27,7 +27,7 @@ This microservice aggregates metrics from multiple containers and exposes them o
 3. Access the aggregated metrics at:
 
     ```sh
-    http://localhost:8080/metrics
+    http://localhost:9090/metrics
     ```
 
 ### Configuration

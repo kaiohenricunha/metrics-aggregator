@@ -1,31 +1,26 @@
-# Stage 1: Build the Go app
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-FROM golang:1.24-alpine as builder
-LABEL stage=builder
-
+# ── Stage 1: build ──────────────────────────────────────────────
+FROM golang:1.24-alpine AS builder
 WORKDIR /app
 
-# Install git
 RUN apk add --no-cache git
 
-# Copy go modules
-COPY go.mod ./
+# copy and cache deps
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Copy source code
+# copy source
 COPY . .
 
-# Build the app
-RUN go build -o main .
+# build the single main package in the root
+RUN CGO_ENABLED=0 go build -o metrics-aggregator .
 
-# Stage 2: Create the final image
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-FROM alpine
+# ── Stage 2: final image ───────────────────────────────────────
+FROM alpine:3.20
 
-# Copy the built app from the builder stage
-COPY --from=builder /app/main /main
+ARG AGG_PORT=9090
+ENV AGG_PORT=${AGG_PORT}
 
-# Expose port
-EXPOSE 8080
+COPY --from=builder /app/metrics-aggregator /usr/local/bin/metrics-aggregator
+EXPOSE ${AGG_PORT}
 
-# Command to run
-CMD ["/main"]
+ENTRYPOINT ["/usr/local/bin/metrics-aggregator"]

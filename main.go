@@ -41,11 +41,13 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	aggregator.SetupEndpoints()
+	if err := aggregator.SetupEndpoints(); err != nil {
+		log.Fatal().Err(err).Msg("setup endpoints failed")
+	}
 
 	port := os.Getenv("METRICS_AGGREGATOR_PORT")
 	if port == "" {
-		port = "9090"
+		port = aggregator.DefaultAggregatorPort
 	}
 	addr := ":" + port
 

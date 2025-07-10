@@ -8,54 +8,53 @@ import (
 	"testing"
 )
 
-// TestSetupEndpoints verifies correct initialisation from env-var and fallback.
+// TestSetupEndpoints error when env-var missing and success when set.
 func TestSetupEndpoints(t *testing.T) {
-	// Case 1: default endpoints
+	// Case 1: env not set → expect error
 	endpoints = nil
-	os.Unsetenv("METRICS_ENDPOINTS")
-	SetupEndpoints()
-	if len(endpoints) != 2 {
-		t.Fatalf("expected 2 default endpoints, got %d", len(endpoints))
+	os.Unsetenv(metricsEnvVariableName)
+	if err := SetupEndpoints(); err == nil {
+		t.Fatalf("expected error when %s is unset", metricsEnvVariableName)
 	}
 
-	// Case 2: custom env-var
+	// Case 2: valid JSON map
 	endpoints = nil
-	env := `{"my-release":"http://localhost:8080/metrics","sidecar":"http://localhost:8082/metrics"}`
-	os.Setenv("METRICS_ENDPOINTS", env)
-	SetupEndpoints()
-	if len(endpoints) != 2 {
-		t.Fatalf("expected 2 env endpoints, got %d", len(endpoints))
+	env := `{"svc1":"http://localhost:9090/metrics","svc2":"http://localhost:8082/metrics"}`
+	os.Setenv(metricsEnvVariableName, env)
+	if err := SetupEndpoints(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if endpoints[0].Name != "my-release" || endpoints[1].Name != "sidecar" {
-		t.Fatalf("unexpected endpoints: %+v", endpoints)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints, got %d", len(endpoints))
+	}
+	if endpoints[0].Name != "svc1" || endpoints[1].Name != "svc2" {
+		t.Fatalf("endpoint names wrong: %+v", endpoints)
 	}
 }
 
-// TestAggregateMetrics checks that metrics are fetched and relabelled.
+// TestAggregateMetrics ensures scrape + relabel works.
 func TestAggregateMetrics(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte(`# HELP test_metric help
-# TYPE test_metric counter
-test_metric{label="value"} 1`)); err != nil {
-			t.Fatalf("write failed: %v", err)
-		}
+		_, _ = w.Write([]byte(`# HELP m A metric
+# TYPE m counter
+m{l="v"} 1`))
 	}))
 	defer server.Close()
 
-	endpoints = []Endpoint{{Name: "test-service", URL: server.URL}}
+	endpoints = []Endpoint{{Name: "test", URL: server.URL}}
 
-	metrics, err := AggregateMetrics()
+	res, err := AggregateMetrics()
 	if err != nil {
 		t.Fatalf("aggregate error: %v", err)
 	}
-	want := `test_metric{origin_container="test-service",label="value"} 1`
-	if !strings.Contains(metrics, want) {
-		t.Fatalf("expected %q, got %q", want, metrics)
+	want := `m{origin_container="test",l="v"} 1`
+	if !strings.Contains(res, want) {
+		t.Fatalf("want %q in output, got %q", want, res)
 	}
 }
 
-// TestAddCustomLabel ensures label injection works with and without existing labels.
+// TestAddCustomLabel checks label injection.
 func TestAddCustomLabel(t *testing.T) {
 	got := addCustomLabel(`metric{a="b"} 1`, "svc")
 	want := `metric{origin_container="svc",a="b"} 1`
