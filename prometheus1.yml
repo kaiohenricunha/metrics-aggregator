@@ -4,4 +4,5 @@ global:
 scrape_configs:
   - job_name: 'prometheus1'
     static_configs:
-      - targets: ['localhost:9090']
+      # Scrape itself so you get Prometheus metrics, too.
+      - targets: ['localhost:${PROM_PORT}']

@@ -1,0 +1,31 @@
+name: GoReleaser
+
+on:
+  push:
+    tags: ['v*.*.*']            # 1.  only semantic tags trigger
+  workflow_dispatch:            # 2.  manual re-run button
+
+jobs:
+  release:
+    # wait until the container is built & scanned
+    needs: scan-image           # from docker-publish.yml
+    runs-on: ubuntu-latest
+
+    concurrency:                # one release per tag
+      group: goreleaser-${{ github.ref }}
+      cancel-in-progress: true
+
+    permissions:                # GoReleaser uploads assets & provenance
+      contents: write
+      packages: write
+      id-token: write           # keyless signing
+
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}  # let GoReleaser generate changelog
+
+      - uses: goreleaser/goreleaser-action@v5
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean

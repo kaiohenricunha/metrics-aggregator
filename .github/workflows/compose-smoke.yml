@@ -1,0 +1,70 @@
+name: Compose smoke test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  compose-test:
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+
+    # ── single source of truth for ports ───────────────────────────
+    env:
+      AGG_PORT: 9090
+      PROM_PORT: 9090
+      PROM1_EXT: 9091
+      PROM2_EXT: 9092
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 0 ── extract Go version once
+      - name: Extract Go version
+        id: goversion
+        run: echo "GO_VERSION=$(grep '^go ' go.mod | cut -d' ' -f2)" >> "$GITHUB_ENV"
+
+      # 1 ── write .env for Compose
+      - name: Create .env file
+        run: |
+          cat <<EOF > .env
+          AGG_PORT=${AGG_PORT}
+          PROM_PORT=${PROM_PORT}
+          PROM1_EXT=${PROM1_EXT}
+          PROM2_EXT=${PROM2_EXT}
+          GO_VERSION=${GO_VERSION}
+          EOF
+          cat .env
+
+      - uses: docker/setup-buildx-action@v3
+
+      # 2 ── validate compose file
+      - name: docker compose config
+        run: docker compose config
+
+      # 3 ── build & start the stack
+      - name: docker compose up
+        run: docker compose up -d --wait
+
+      # 4 ── probe aggregator
+      - name: Probe aggregator /metrics
+        run: |
+          for i in {1..10}; do
+            if curl -fs http://localhost:${AGG_PORT}/metrics >/dev/null; then
+              echo "Aggregator healthy"; exit 0
+            fi
+            echo "waiting…"; sleep 2
+          done
+          echo "Aggregator never came up"; exit 1
+
+      # 5 ── probe Prometheus instances
+      - name: Probe Prometheus
+        run: |
+          curl -f http://localhost:${PROM1_EXT}/-/healthy
+          curl -f http://localhost:${PROM2_EXT}/-/healthy
+
+      # 6 ── always clean up
+      - name: docker compose down
+        if: always()
+        run: docker compose down -v

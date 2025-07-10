@@ -12,19 +12,22 @@ This microservice aggregates metrics from multiple containers and exposes them o
 ### Steps
 
 1. Clone the repository:
+
     ```sh
     git clone git@github.com:kaiohenricunha/metrics-aggregator.git
     cd metrics-aggregator
     ```
 
 2. Build and start the services using Docker Compose:
+
     ```sh
     docker-compose up --build
     ```
 
 3. Access the aggregated metrics at:
-    ```
-    http://localhost:8080/metrics
+
+    ```sh
+    http://localhost:9090/metrics
     ```
 
 ### Configuration

@@ -1,0 +1,13 @@
+name-template: 'v$RESOLVED_VERSION'
+tag-template:  'v$RESOLVED_VERSION'
+
+categories:
+  - title: '🚀 Features'
+    labels: [feature, enhancement]
+  - title: '🐛 Fixes'
+    labels: [bug]
+  - title: '🧹 Maintenance'
+    labels: [chore, refactor]
+
+change-template: '- $TITLE (#$NUMBER)'
+version-template: $MAJOR.$MINOR.$PATCH

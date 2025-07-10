@@ -4,4 +4,4 @@ global:
 scrape_configs:
   - job_name: 'prometheus2'
     static_configs:
-      - targets: ['localhost:9090']
+      - targets: ['localhost:${PROM_PORT}']

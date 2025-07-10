@@ -1,0 +1,20 @@
+name: Semantic version & tag
+on:
+  push:
+    branches: [main]
+
+jobs:
+  semrel:
+    runs-on: ubuntu-latest
+    permissions:          # must be able to write tags & releases
+      contents: write
+      packages: write     # lets plugins upload assets if you add any
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}      # semrel needs full history
+
+      - uses: go-semantic-release/action@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          allow-initial-development-versions: true
+          force-bump-patch-version: true

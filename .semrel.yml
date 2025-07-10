@@ -1,0 +1,5 @@
+branches: [main]             # releases only from main
+tag_format: v${version}      # keep the v prefix
+changelog:
+  sort: asc                  # oldest-first inside each section
+plugins:
