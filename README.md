@@ -1,55 +1,84 @@
 # Metrics Aggregator
 
-This microservice aggregates metrics from multiple containers and exposes them on a single endpoint and can be useful as a sidecar container in multi-container pods, each exposing its own set of metrics.
+A **sidecar microservice** that scrapes Prometheus-formatted metrics from multiple containers in the same pod and exposes **one** unified `/metrics` endpoint. This helps work around a known Istio limitation:
+
+Istio’s built-in metrics-merge only supports _one port per pod_ (see [Prometheus, Istio, and mTLS: the definitive explanation](https://superorbital.io/blog/istio-metrics-merging/) for details).
+
+## Features
+
+- Scrape any number of HTTP metric endpoints (from other containers in the pod)  
+- Merge them into a single Prometheus-compatible stream  
+- Expose on a configurable port (default `9090`)  
+- Ideal for multi-container pods running under Istio with strict mTLS
 
 ## Running Locally
 
 ### Prerequisites
 
-- Docker
-- Docker Compose
+- [Docker](https://www.docker.com/get-started) (v20+)  
+- [Docker Compose](https://docs.docker.com/compose/install/) (v1.29+)
 
-### Steps
+### Quick Start
 
-1. Clone the repository:
+1. **Clone the repo**  
+   ```bash
+   git clone git@github.com:kaiohenricunha/metrics-aggregator.git
+   cd metrics-aggregator
+   ```
 
-    ```sh
-    git clone git@github.com:kaiohenricunha/metrics-aggregator.git
-    cd metrics-aggregator
-    ```
+2. **Configure endpoints**
+   Edit `docker-compose.yml` (or set an environment variable) to list all HTTP metric sources in the pod:
 
-2. Build and start the services using Docker Compose:
+   ```yaml
+   services:
+     aggregator:
+       environment:
+         METRICS_ENDPOINTS: |
+           http://prometheus1:9091/metrics,
+           http://prometheus2:9092/metrics
+   ```
 
-    ```sh
-    docker-compose up --build
-    ```
+3. **Build & run**
 
-3. Access the aggregated metrics at:
+   ```bash
+   docker-compose up --build
+   ```
 
-    ```sh
-    http://localhost:9090/metrics
-    ```
+4. **Verify**
+   Open your browser or curl:
 
-### Configuration
+   ```
+   http://localhost:9090/metrics
+   ```
 
-The `docker-compose.yml` file defines the services and their configurations. The `METRICS_ENDPOINTS` environment variable is used to specify the endpoints from which metrics are aggregated.
+### Configuration Reference
 
-### Simulating Real Metrics
+| Variable            | Default | Description                                                     |
+| ------------------- | ------- | --------------------------------------------------------------- |
+| `METRICS_ENDPOINTS` | *—*     | **Required.** Comma-separated list of URLs to scrape.           |
+| `AGGREGATOR_PORT`   | `9090`  | Port on which merged metrics are exposed.                       |
+| `SCRAPE_INTERVAL`   | `15s`   | How often the aggregator polls each target (Prometheus format). |
 
-The setup includes two Prometheus instances (`prometheus1` and `prometheus2`) that expose metrics. The configuration files [prometheus1.yml](http://_vscodecontentref_/1) and [prometheus2.yml](http://_vscodecontentref_/2) define the scrape configurations for these instances.
+> **Note:** The two demo services, `prometheus1` and `prometheus2`, each run a tiny Prometheus instance exposing sample metrics. Their configs live in `prometheus1.yml` and `prometheus2.yml`.
 
-### Stopping the Services
+## Stopping & Cleanup
 
-To stop the services, run:
-
-```sh
+```bash
 docker-compose down
 ```
 
-### Logs
+This will also remove the demo Prometheus containers.
 
-To view the logs of the aggregator service, run:
+## Viewing Logs
 
-```sh
+To tail the aggregator’s logs:
+
+```bash
 docker-compose logs -f aggregator
 ```
+
+---
+
+> **Read more about the underlying Istio limitation:**
+> [https://superorbital.io/blog/istio-metrics-merging/](https://superorbital.io/blog/istio-metrics-merging/)
+> *“Primary among these limitations is the fact that you cannot … fetch metrics from multiple ports in a single pod …”*
