@@ -21,7 +21,7 @@ jobs:
       id-token: write           # keyless signing
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: {fetch-depth: 0}  # let GoReleaser generate changelog
 
       - uses: goreleaser/goreleaser-action@v5

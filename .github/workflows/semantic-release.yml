@@ -10,7 +10,7 @@ jobs:
       contents: write
       packages: write     # lets plugins upload assets if you add any
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: {fetch-depth: 0}      # semrel needs full history
 
       - uses: go-semantic-release/action@v1
