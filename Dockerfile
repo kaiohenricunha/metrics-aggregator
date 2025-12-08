@@ -9,7 +9,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o metrics-aggregator .
 
 # ── Stage 2: final image ───────────────────────────────────────
-FROM alpine:3.20
+FROM alpine:3.23
 ARG AGG_PORT=9090
 ENV AGG_PORT=$AGG_PORT
 COPY --from=builder /app/metrics-aggregator /usr/local/bin/
