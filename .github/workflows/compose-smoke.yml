@@ -18,7 +18,7 @@ jobs:
       PROM2_EXT: 9092
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # 0 ── extract Go version once
       - name: Extract Go version

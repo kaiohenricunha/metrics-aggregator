@@ -12,7 +12,7 @@ jobs:
       contents: read
     steps:
       # ① checkout
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # ② setup Go (follows go.mod; 1.24 in your case)
       - uses: actions/setup-go@v5
