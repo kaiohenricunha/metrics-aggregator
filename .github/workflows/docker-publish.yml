@@ -117,6 +117,6 @@ jobs:
       # upload the report so it appears under “Security › Code scanning”
       - name: Upload Trivy SARIF
         if: always()                  # run even if exit-code=1 triggered
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
