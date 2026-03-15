@@ -99,10 +99,11 @@ jobs:
       - name: Scan image with Trivy
         run: |
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -e "TRIVY_USERNAME=${{ github.actor }}" \
             -e "TRIVY_PASSWORD=${{ secrets.GITHUB_TOKEN }}" \
-            aquasecurity/trivy:0.68.0 image \
+            aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c image \
             --exit-code 1 \
             --vuln-type os,library \
             --severity CRITICAL,HIGH \
@@ -111,8 +112,7 @@ jobs:
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build.outputs.digest }}"
 
       - name: Upload Trivy SARIF
-        if: always()
-        continue-on-error: true
+        if: always() && hashFiles('trivy-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
