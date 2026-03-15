@@ -98,14 +98,17 @@ jobs:
     steps:
       - name: Scan image with Trivy
         run: |
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$RUNNER_TEMP/trivy-cache:/tmp/trivy-cache" \
             -e "TRIVY_USERNAME=${{ github.actor }}" \
             -e "TRIVY_PASSWORD=${{ secrets.GITHUB_TOKEN }}" \
             aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c image \
+            --cache-dir /tmp/trivy-cache \
             --exit-code 1 \
-            --vuln-type os,library \
+            --pkg-types os,library \
             --severity CRITICAL,HIGH \
             --format sarif \
             --output /workspace/trivy-results.sarif \
