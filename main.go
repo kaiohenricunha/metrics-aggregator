@@ -2,9 +2,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/kaiohenricunha/metrics-aggregator/pkg/aggregator"
@@ -42,6 +45,29 @@ func makeMetricsHandler(agg *aggregator.Aggregator) http.HandlerFunc {
 	}
 }
 
+func run(ctx context.Context, agg *aggregator.Aggregator, addr string) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "ok")
+	})
+	mux.HandleFunc("/metrics", makeMetricsHandler(agg))
+
+	srv := &http.Server{Addr: addr, Handler: mux}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		srv.Shutdown(shutdownCtx)
+	}()
+
+	err := srv.ListenAndServe()
+	if err == http.ErrServerClosed {
+		return nil
+	}
+	return err
+}
+
 func main() {
 	agg, err := aggregator.NewAggregator(os.Getenv("METRICS_ENDPOINTS"))
 	if err != nil {
@@ -54,14 +80,12 @@ func main() {
 	}
 	addr := ":" + port
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, "ok")
-	})
-	mux.HandleFunc("/metrics", makeMetricsHandler(agg))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
 
 	log.Info().Str("addr", addr).Msg("HTTP server starting")
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := run(ctx, agg, addr); err != nil {
 		log.Fatal().Err(err).Msg("HTTP server exited")
 	}
+	log.Info().Msg("HTTP server stopped gracefully")
 }
