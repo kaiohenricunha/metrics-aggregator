@@ -1,5 +1,5 @@
 # ── Stage 1: build ──────────────────────────────────────────────
-ARG GO_VERSION=1.26           # <── default
+ARG GO_VERSION=1.26.1         # <── default
 FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache git
@@ -12,6 +12,8 @@ RUN CGO_ENABLED=0 go build -o metrics-aggregator .
 FROM alpine:3.20
 ARG AGG_PORT=9090
 ENV AGG_PORT=$AGG_PORT
+RUN addgroup -S app && adduser -S -D -H -h /nonexistent -s /sbin/nologin -G app -u 10001 app
 COPY --from=builder /app/metrics-aggregator /usr/local/bin/
 EXPOSE $AGG_PORT
+USER app:app
 ENTRYPOINT ["metrics-aggregator"]

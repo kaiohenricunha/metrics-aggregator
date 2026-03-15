@@ -13,6 +13,17 @@ spec:
     - name: aggregator
       image: metrics-aggregator:e2e
       imagePullPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
       ports:
         - containerPort: 9090
           name: metrics
