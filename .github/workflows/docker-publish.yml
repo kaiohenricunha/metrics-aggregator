@@ -90,23 +90,33 @@ jobs:
     needs: build
     if: ${{ needs.build.outputs.should_publish == 'true' }}
     runs-on: ubuntu-latest
-    permissions:                 # read permission is enough for Trivy
+    permissions:
       contents: read
       packages: read
+      security-events: write      # required for SARIF upload
 
     steps:
       - name: Scan image with Trivy
         id: trivy
-        uses: aquasecurity/trivy-action@0.34.1   # latest 2025-06 release
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}
           exit-code: 1           # fail on HIGH / CRITICAL vulns
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          version: 'v0.68.0'     # pin to avoid broken auto-resolved version
+          limit-severities-for-sarif: true
+
+      - name: Check SARIF exists
+        id: sarif-check
+        if: always()
+        run: test -f trivy-results.sarif && echo “exists=true” >> “$GITHUB_OUTPUT” || echo “exists=false” >> “$GITHUB_OUTPUT”
 
       # upload the report so it appears under “Security › Code scanning”
       - name: Upload Trivy SARIF
-        if: always()                  # run even if exit-code=1 triggered
+        if: ${{ always() && steps.sarif-check.outputs.exists == 'true' }}
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
