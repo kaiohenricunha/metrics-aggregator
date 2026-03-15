@@ -95,19 +95,33 @@ jobs:
       packages: read
       security-events: write      # required for SARIF upload
 
+    env:
+      TRIVY_VERSION: '0.68.0'
+
     steps:
-      - name: Scan image with Trivy
-        id: trivy
-        uses: aquasecurity/trivy-action@0.34.1
+      - name: Install Trivy binary
+        run: |
+          set -euo pipefail
+          curl -fsSL “https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz” \
+            | tar -xzf - -C /usr/local/bin trivy
+          trivy version
+
+      - name: Log into registry
+        uses: docker/login-action@v3
         with:
-          image-ref: ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}
-          exit-code: 1           # fail on HIGH / CRITICAL vulns
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          version: 'v0.68.0'     # pin to avoid broken auto-resolved version
-          limit-severities-for-sarif: true
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan image with Trivy
+        run: |
+          trivy image \
+            --exit-code 1 \
+            --vuln-type os,library \
+            --severity CRITICAL,HIGH \
+            --format sarif \
+            --output trivy-results.sarif \
+            “ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}”
 
       - name: Check SARIF exists
         id: sarif-check
