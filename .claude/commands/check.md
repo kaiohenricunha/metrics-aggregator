@@ -4,4 +4,4 @@ Run the full pre-PR verification suite:
 make check
 ```
 
-This runs build, vet, race-detector tests, and all three static analysis tools (staticcheck, revive, govulncheck) in sequence. Fix any errors before opening a pull request.
+This runs build, vet, tests, and static analysis (staticcheck + revive) in sequence. For full pre-PR verification also run `make vulncheck`. Fix any errors before opening a pull request.

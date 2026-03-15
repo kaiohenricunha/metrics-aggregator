@@ -34,3 +34,6 @@ go.work.sum
 
 metrics-aggregator
 .bin/
+
+# E2E test evidence (generated each run)
+test/e2e/evidence/

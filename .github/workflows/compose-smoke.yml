@@ -51,12 +51,16 @@ jobs:
       - name: Probe aggregator /metrics
         run: |
           for i in {1..10}; do
-            if curl -fs http://localhost:${AGG_PORT}/metrics >/dev/null; then
-              echo "Aggregator healthy"; exit 0
+            if curl -fs http://localhost:${AGG_PORT}/metrics -o /tmp/metrics.txt; then
+              break
             fi
             echo "waiting…"; sleep 2
           done
-          echo "Aggregator never came up"; exit 1
+          test -s /tmp/metrics.txt || { echo "Aggregator never came up"; exit 1; }
+          grep -q 'origin_container="prometheus1"' /tmp/metrics.txt
+          grep -q 'origin_container="prometheus2"' /tmp/metrics.txt
+          grep -q 'metrics_aggregator_scrape_success' /tmp/metrics.txt
+          echo "Aggregator output validated"
 
       # 5 ── probe Prometheus instances
       - name: Probe Prometheus

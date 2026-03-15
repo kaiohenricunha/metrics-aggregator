@@ -1,6 +1,6 @@
 module github.com/kaiohenricunha/metrics-aggregator
 
-go 1.24
+go 1.26
 
 require github.com/rs/zerolog v1.34.0
 

@@ -1,5 +1,5 @@
 # ── Stage 1: build ──────────────────────────────────────────────
-ARG GO_VERSION=1.24           # <── default
+ARG GO_VERSION=1.26           # <── default
 FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache git

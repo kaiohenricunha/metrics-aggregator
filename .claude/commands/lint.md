@@ -4,4 +4,4 @@ Run all three static analysis tools:
 make lint
 ```
 
-This installs staticcheck, revive, and govulncheck into `.bin/` if not present, then runs each against `./...`. Address every reported issue before merging.
+This installs staticcheck and revive into `.bin/` if not present, then runs each against `./...`. For vulnerability scanning run `make vulncheck` separately. Address every reported issue before merging.
