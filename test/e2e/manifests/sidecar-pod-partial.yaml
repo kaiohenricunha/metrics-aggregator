@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: aggregator-sidecar-partial
+  namespace: e2e-metrics-aggregator
+  labels:
+    app: aggregator-sidecar-partial
+spec:
+  restartPolicy: Never
+  containers:
+    - name: aggregator
+      image: metrics-aggregator:e2e
+      imagePullPolicy: Never
+      ports:
+        - containerPort: 9090
+          name: metrics
+      env:
+        - name: METRICS_ENDPOINTS
+          value: '{"app-a":"http://localhost:8081/metrics","app-b":"http://localhost:19999/metrics"}'
+        - name: METRICS_AGGREGATOR_PORT
+          value: "9090"
+        - name: LOG_LEVEL
+          value: debug
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 9090
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 9090
+        initialDelaySeconds: 3
+        periodSeconds: 5
+
+    - name: app-a
+      image: nginx:alpine
+      ports:
+        - containerPort: 8081
+      volumeMounts:
+        - name: app-a-metrics
+          mountPath: /usr/share/nginx/metrics
+        - name: app-nginx-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: app-a.conf
+
+  volumes:
+    - name: app-a-metrics
+      configMap:
+        name: app-a-metrics
+    - name: app-nginx-config
+      configMap:
+        name: app-nginx-config
