@@ -1,28 +1,67 @@
 name: GoReleaser
 
 on:
-  push:
-    tags: ['v*.*.*']            # 1.  only semantic tags trigger
-  workflow_dispatch:            # 2.  manual re-run button
+  workflow_run:
+    workflows: ["Docker publish"]
+    types: [completed]
 
 jobs:
+  resolve-tag:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch != 'main' }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Resolve semantic tag for triggering commit
+        id: resolve
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          triggered_ref="${{ github.event.workflow_run.head_branch }}"
+          mapfile -t tags < <(git tag --points-at "$sha" --list 'v*.*.*' | sort -Vr)
+
+          if [ "${#tags[@]}" -eq 0 ]; then
+            echo "::error::No semantic tag found for triggering commit ${sha}"
+            exit 1
+          fi
+
+          selected_tag="${tags[0]}"
+          if [ -n "$triggered_ref" ]; then
+            if ! printf '%s\n' "${tags[@]}" | grep -Fxq "$triggered_ref"; then
+              echo "::error::Trigger ref ${triggered_ref} is not a semantic tag on ${sha}"
+              exit 1
+            fi
+            selected_tag="$triggered_ref"
+          fi
+
+          echo "tag=$selected_tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
   release:
-    # wait until the container is built & scanned
-    needs: scan-image           # from docker-publish.yml
+    needs: resolve-tag
+    if: ${{ needs.resolve-tag.result == 'success' && needs.resolve-tag.outputs.tag != '' }}
     runs-on: ubuntu-latest
 
-    concurrency:                # one release per tag
-      group: goreleaser-${{ github.ref }}
+    concurrency:
+      group: goreleaser-${{ needs.resolve-tag.outputs.tag }}
       cancel-in-progress: true
 
-    permissions:                # GoReleaser uploads assets & provenance
+    permissions:
       contents: write
       packages: write
-      id-token: write           # keyless signing
+      id-token: write
 
     steps:
       - uses: actions/checkout@v6
-        with: {fetch-depth: 0}  # let GoReleaser generate changelog
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.resolve-tag.outputs.tag }}
 
       - uses: goreleaser/goreleaser-action@v7
         with:
