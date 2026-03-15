@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -331,6 +332,45 @@ func TestGenerateRequestID_FallbackWhenEntropyFails(t *testing.T) {
 	}
 	if id1 == id2 {
 		t.Fatalf("fallback request IDs must remain unique, both were %q", id1)
+	}
+}
+
+func TestMetricsHandler_HTTPRequestsTotal(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	// Use a long cache TTL so the second request hits cache
+	t.Setenv("METRICS_CACHE_TTL", "10s")
+	t.Setenv("METRICS_MAX_INFLIGHT", "32")
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	// First request (cache miss)
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body1, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if !strings.Contains(string(body1), "metrics_aggregator_http_requests_total 1") {
+		t.Fatalf("expected http_requests_total 1 on first request, got:\n%s", body1)
+	}
+
+	// Second request (cache hit — should still increment)
+	resp, err = http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body2, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if !strings.Contains(string(body2), "metrics_aggregator_http_requests_total 2") {
+		t.Fatalf("expected http_requests_total 2 on cached request, got:\n%s", body2)
 	}
 }
 

@@ -317,6 +317,12 @@ func TestAddCustomLabel_EdgeCases(t *testing.T) {
 			want:   `metric{origin_container="old"} 1`,
 		},
 		{
+			name:   "origin_container in label value should not prevent injection",
+			metric: `metric{note="origin_container=x"} 1`,
+			epName: "svc",
+			want:   `metric{origin_container="svc",note="origin_container=x"} 1`,
+		},
+		{
 			name:   "histogram bucket",
 			metric: `http_duration_bucket{le="0.5"} 100`,
 			epName: "web",

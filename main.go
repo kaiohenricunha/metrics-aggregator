@@ -159,8 +159,10 @@ func (c *metricsCache) getOrFetch(ctx context.Context, fetch func(context.Contex
 func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.HandlerFunc {
 	cache := &metricsCache{ttl: cfg.cacheTTL}
 	inflightLimiter := make(chan struct{}, cfg.maxInflight)
+	var httpRequests atomic.Int64
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		httpRequests.Add(1)
 		start := time.Now()
 		logger := zerolog.Ctx(r.Context())
 
@@ -197,6 +199,14 @@ func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.H
 				Msg("request completed")
 			return
 		}
+
+		// Append HTTP-level request counter (increments on every request, including cache hits)
+		metrics += fmt.Sprintf(
+			"# HELP metrics_aggregator_http_requests_total Total number of HTTP requests to the /metrics endpoint.\n"+
+				"# TYPE metrics_aggregator_http_requests_total counter\n"+
+				"metrics_aggregator_http_requests_total %d\n",
+			httpRequests.Load(),
+		)
 
 		_, _ = fmt.Fprint(rec, metrics)
 		logger.Info().

@@ -32,8 +32,9 @@ const (
 )
 
 var (
-	validName  = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	sampleLine = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{[^}]*\})?\s+(?:NaN|[+-]?Inf|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+\d+)?$`)
+	validName      = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	sampleLine     = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{[^}]*\})?\s+(?:NaN|[+-]?Inf|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+\d+)?$`)
+	originLabelKey = regexp.MustCompile(`[{,]\s*origin_container\s*=`)
 )
 
 // Endpoint represents a Prometheus /metrics endpoint.
@@ -261,7 +262,7 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_invalid_samples{endpoint=%q} %d", ep.Name, results[i].invalidSamples))
 	}
 	merged = append(merged,
-		"# HELP metrics_aggregator_requests_total Total number of aggregation executions.",
+		"# HELP metrics_aggregator_requests_total Total number of aggregation executions (excludes cache hits).",
 		"# TYPE metrics_aggregator_requests_total counter",
 		fmt.Sprintf("metrics_aggregator_requests_total %d", a.requestsTotal.Load()),
 		"# HELP metrics_aggregator_errors_total Total number of failed aggregation executions (all endpoints down).",
@@ -298,8 +299,8 @@ func addCustomLabel(metric, name string) string {
 	}
 	lbls, val := parts[0], parts[1]
 
-	// C3: skip injection if origin_container already present
-	if strings.Contains(lbls, "origin_container=") {
+	// C3: skip injection if origin_container is already a label key
+	if originLabelKey.MatchString(lbls) {
 		return metric
 	}
 
