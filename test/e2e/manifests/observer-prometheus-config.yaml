@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: observer-prometheus-config
+  namespace: e2e-metrics-aggregator
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      scrape_timeout: 10s
+    scrape_configs:
+      - job_name: aggregator
+        static_configs:
+          - targets: ['aggregator-svc:9090']
+        scrape_interval: 15s
+        scrape_timeout: 10s

@@ -10,7 +10,7 @@ jobs:
     permissions: {contents: read}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v5
         with:
@@ -23,7 +23,7 @@ jobs:
           go tool cover -html=cover.out -o cover.html
 
       - name: Upload HTML report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-report
           path: cover.html

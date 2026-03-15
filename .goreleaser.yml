@@ -3,7 +3,7 @@ project_name: metrics-aggregator
 # ────── build the CLI binaries ─────────────────────────
 builds:
   - id: default
-    main: ./cmd/metrics-aggregator      # or ./main.go
+    main: ./main.go
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     env: [CGO_ENABLED=0]

@@ -1,0 +1,82 @@
+# ConfigMaps providing static Prometheus-format metrics for lightweight
+# nginx metric servers that simulate real application containers.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-a-metrics
+  namespace: e2e-metrics-aggregator
+data:
+  metrics.txt: |
+    # HELP http_requests_total Total HTTP requests handled
+    # TYPE http_requests_total counter
+    http_requests_total{method="GET",status="200"} 1027
+    http_requests_total{method="POST",status="201"} 56
+    http_requests_total{method="GET",status="404"} 12
+    # HELP http_request_duration_seconds HTTP request latency histogram
+    # TYPE http_request_duration_seconds histogram
+    http_request_duration_seconds_bucket{le="0.005"} 320
+    http_request_duration_seconds_bucket{le="0.01"} 540
+    http_request_duration_seconds_bucket{le="0.025"} 780
+    http_request_duration_seconds_bucket{le="0.05"} 900
+    http_request_duration_seconds_bucket{le="0.1"} 1020
+    http_request_duration_seconds_bucket{le="0.25"} 1070
+    http_request_duration_seconds_bucket{le="0.5"} 1083
+    http_request_duration_seconds_bucket{le="1"} 1090
+    http_request_duration_seconds_bucket{le="+Inf"} 1095
+    http_request_duration_seconds_sum 28.7
+    http_request_duration_seconds_count 1095
+    # HELP go_goroutines Number of goroutines
+    # TYPE go_goroutines gauge
+    go_goroutines 42
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-b-metrics
+  namespace: e2e-metrics-aggregator
+data:
+  metrics.txt: |
+    # HELP jobs_processed_total Total jobs processed by the worker
+    # TYPE jobs_processed_total counter
+    jobs_processed_total{queue="default"} 8491
+    jobs_processed_total{queue="priority"} 1203
+    # HELP job_duration_seconds Job processing duration summary
+    # TYPE job_duration_seconds summary
+    job_duration_seconds{quantile="0.5"} 0.032
+    job_duration_seconds{quantile="0.9"} 0.089
+    job_duration_seconds{quantile="0.99"} 0.214
+    job_duration_seconds_sum 412.8
+    job_duration_seconds_count 9694
+    # HELP worker_pool_size Current number of active workers
+    # TYPE worker_pool_size gauge
+    worker_pool_size 8
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-nginx-config
+  namespace: e2e-metrics-aggregator
+data:
+  app-a.conf: |
+    server {
+        listen 8081;
+        location /metrics {
+            alias /usr/share/nginx/metrics/metrics.txt;
+            default_type "text/plain";
+        }
+        location / {
+            return 404;
+        }
+    }
+  app-b.conf: |
+    server {
+        listen 8082;
+        location /metrics {
+            alias /usr/share/nginx/metrics/metrics.txt;
+            default_type "text/plain";
+        }
+        location / {
+            return 404;
+        }
+    }

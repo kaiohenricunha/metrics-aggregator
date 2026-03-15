@@ -53,11 +53,25 @@ Istio’s built-in metrics-merge only supports _one port per pod_ (see [Promethe
 
 ### Configuration Reference
 
-| Variable            | Default | Description                                                     |
-| ------------------- | ------- | --------------------------------------------------------------- |
-| `METRICS_ENDPOINTS` | *—*     | **Required.** Comma-separated list of URLs to scrape.           |
-| `AGGREGATOR_PORT`   | `9090`  | Port on which merged metrics are exposed.                       |
-| `SCRAPE_INTERVAL`   | `15s`   | How often the aggregator polls each target (Prometheus format). |
+| Variable | Default | Description |
+| --- | --- | --- |
+| `METRICS_ENDPOINTS` | *—* | **Required.** JSON map or comma-separated endpoint list to scrape. |
+| `METRICS_AGGREGATOR_PORT` | `9090` | Port on which merged metrics are exposed. |
+| `METRICS_SECURITY_MODE` | `strict` | Endpoint validation mode. `strict` blocks unsafe URL forms; `legacy` keeps previous permissive behavior. |
+| `METRICS_CACHE_TTL` | `1s` | Cache window for merged `/metrics` output to reduce fan-out amplification. |
+| `METRICS_MAX_INFLIGHT` | `32` | Maximum concurrent `/metrics` requests served before returning `503`. |
+| `METRICS_SERVER_READ_HEADER_TIMEOUT` | `2s` | Maximum time to receive request headers. |
+| `METRICS_SERVER_READ_TIMEOUT` | `5s` | Maximum time to read full request. |
+| `METRICS_SERVER_WRITE_TIMEOUT` | `10s` | Maximum time to write response. |
+| `METRICS_SERVER_IDLE_TIMEOUT` | `60s` | Keep-alive idle connection timeout. |
+| `METRICS_SERVER_MAX_HEADER_BYTES` | `1048576` | Max request header size (1 MiB). |
+
+### Security Defaults
+
+- `strict` endpoint mode rejects unsafe endpoint shapes (unsupported schemes, URL credentials, and non-metrics paths).
+- Redirect responses from scrape targets are not followed by default.
+- Invalid metric samples are dropped and reflected in self-instrumentation metrics.
+- The server applies explicit HTTP timeouts and bounded request concurrency.
 
 > **Note:** The two demo services, `prometheus1` and `prometheus2`, each run a tiny Prometheus instance exposing sample metrics. Their configs live in `prometheus1.yml` and `prometheus2.yml`.
 

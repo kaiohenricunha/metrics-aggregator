@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observer-prometheus-istio
+  namespace: e2e-metrics-aggregator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: observer-prometheus-istio
+  template:
+    metadata:
+      labels:
+        app: observer-prometheus-istio
+        sidecar.istio.io/inject: "true"
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/tmp/observer
+            - --web.listen-address=:9090
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: observer-prometheus-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: observer-prometheus-istio
+  namespace: e2e-metrics-aggregator
+spec:
+  selector:
+    app: observer-prometheus-istio
+  ports:
+    - protocol: TCP
+      port: 9090
+      targetPort: 9090
+      name: http
