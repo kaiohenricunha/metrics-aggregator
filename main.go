@@ -21,28 +21,30 @@ func init() {
 	zerolog.SetGlobalLevel(level)
 }
 
-// metricsHandler serves the aggregated /metrics output.
-func metricsHandler(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	log.Info().Msg("/metrics request started")
+func makeMetricsHandler(agg *aggregator.Aggregator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		log.Info().Msg("/metrics request started")
 
-	w.Header().Set("Content-Type", "text/plain")
-	metrics, err := aggregator.AggregateMetrics()
-	if err != nil {
-		log.Error().Err(err).Msg("aggregation failure")
-		http.Error(w, "failed to aggregate metrics", http.StatusInternalServerError)
-		return
+		w.Header().Set("Content-Type", "text/plain")
+		metrics, err := agg.AggregateMetrics()
+		if err != nil {
+			log.Error().Err(err).Msg("aggregation failure")
+			http.Error(w, "failed to aggregate metrics", http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Fprint(w, metrics)
+		log.Info().
+			Dur("duration", time.Since(start)).
+			Int("bytes", len(metrics)).
+			Msg("/metrics request completed")
 	}
-
-	fmt.Fprint(w, metrics)
-	log.Info().
-		Dur("duration", time.Since(start)).
-		Int("bytes", len(metrics)).
-		Msg("/metrics request completed")
 }
 
 func main() {
-	if err := aggregator.SetupEndpoints(); err != nil {
+	agg, err := aggregator.NewAggregator(os.Getenv("METRICS_ENDPOINTS"))
+	if err != nil {
 		log.Fatal().Err(err).Msg("setup endpoints failed")
 	}
 
@@ -52,13 +54,14 @@ func main() {
 	}
 	addr := ":" + port
 
-	log.Info().Str("addr", addr).Msg("HTTP server starting")
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, "ok")
 	})
-	http.HandleFunc("/metrics", metricsHandler)
+	mux.HandleFunc("/metrics", makeMetricsHandler(agg))
 
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	log.Info().Str("addr", addr).Msg("HTTP server starting")
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal().Err(err).Msg("HTTP server exited")
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -202,44 +201,6 @@ func (a *Aggregator) AggregateMetrics() (string, error) {
 	}
 
 	return strings.Join(merged, "\n") + "\n", nil
-}
-
-// --- Backward-compatible package-level wrappers (removed in step 3) ---
-
-var (
-	endpoints         []Endpoint
-	defaultAggregator *Aggregator
-	scrapeClient      = &http.Client{Timeout: 5 * time.Second}
-)
-
-// SetupEndpoints populates the global endpoints slice.
-// Deprecated: use NewAggregator instead.
-func SetupEndpoints() error {
-	zerolog.TimeFieldFormat = time.RFC3339
-	endpoints = nil
-
-	env := os.Getenv(metricsEnvVariableName)
-	agg, err := NewAggregator(env)
-	if err != nil {
-		return err
-	}
-	defaultAggregator = agg
-	endpoints = agg.endpoints
-	return nil
-}
-
-// AggregateMetrics is the package-level wrapper.
-// Deprecated: use (*Aggregator).AggregateMetrics instead.
-func AggregateMetrics() (string, error) {
-	if len(endpoints) == 0 {
-		return "", fmt.Errorf("no endpoints configured")
-	}
-	agg := &Aggregator{
-		endpoints: endpoints,
-		client:    scrapeClient,
-		logger:    log.Logger,
-	}
-	return agg.AggregateMetrics()
 }
 
 // addCustomLabel injects origin_container into a metric line.
