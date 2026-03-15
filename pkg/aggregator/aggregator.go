@@ -24,10 +24,7 @@ const (
 	maxBodySize            = 10 << 20 // 10 MiB
 )
 
-var (
-	validName    = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	scrapeClient = &http.Client{Timeout: 5 * time.Second}
-)
+var validName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // Endpoint represents a Prometheus /metrics endpoint.
 type Endpoint struct {
@@ -35,30 +32,31 @@ type Endpoint struct {
 	URL  string
 }
 
-var endpoints []Endpoint
-
 type scrapeResult struct {
 	lines    []string
 	success  bool
 	duration time.Duration
 }
 
-// SetupEndpoints populates the global endpoints slice.
-// It returns an error when METRICS_ENDPOINTS is unset or malformed.
-func SetupEndpoints() error {
-	zerolog.TimeFieldFormat = time.RFC3339
-	endpoints = nil // clear previous state
+// Aggregator scrapes and merges Prometheus metrics from multiple endpoints.
+type Aggregator struct {
+	endpoints []Endpoint
+	client    *http.Client
+	logger    zerolog.Logger
+}
 
-	env := os.Getenv(metricsEnvVariableName)
-	if strings.TrimSpace(env) == "" {
-		return fmt.Errorf("%s not defined", metricsEnvVariableName)
+// NewAggregator parses endpointsConfig (JSON map or comma-separated URLs)
+// and returns an initialised Aggregator.
+func NewAggregator(endpointsConfig string) (*Aggregator, error) {
+	if strings.TrimSpace(endpointsConfig) == "" {
+		return nil, fmt.Errorf("%s not defined", metricsEnvVariableName)
 	}
 
 	var parsed []Endpoint
 
 	// 1) try to parse as JSON map
 	var endpointMap map[string]string
-	if err := json.Unmarshal([]byte(env), &endpointMap); err == nil {
+	if err := json.Unmarshal([]byte(endpointsConfig), &endpointMap); err == nil {
 		for name, url := range endpointMap {
 			parsed = append(parsed, Endpoint{Name: name, URL: url})
 		}
@@ -66,10 +64,10 @@ func SetupEndpoints() error {
 		// 2) fallback: comma-separated URLs
 		log.Warn().
 			Err(err).
-			Str("env", env).
+			Str("env", endpointsConfig).
 			Msg("failed JSON parse, trying comma-separated list")
 
-		for i, url := range strings.Split(env, ",") {
+		for i, url := range strings.Split(endpointsConfig, ",") {
 			url = strings.TrimSpace(url)
 			if url != "" {
 				parsed = append(parsed, Endpoint{
@@ -83,47 +81,58 @@ func SetupEndpoints() error {
 	// Validate all endpoint names (C2: reject chars that break label values)
 	for _, ep := range parsed {
 		if !validName.MatchString(ep.Name) {
-			return fmt.Errorf("invalid endpoint name %q: must match [a-zA-Z0-9_-]+", ep.Name)
+			return nil, fmt.Errorf("invalid endpoint name %q: must match [a-zA-Z0-9_-]+", ep.Name)
 		}
 	}
 
 	if len(parsed) == 0 {
-		return fmt.Errorf("no valid endpoints found in %s", metricsEnvVariableName)
+		return nil, fmt.Errorf("no valid endpoints found in %s", metricsEnvVariableName)
 	}
 
-	endpoints = parsed
-
-	log.Info().Msg("aggregating metrics from configured endpoints")
-	for _, ep := range endpoints {
-		log.Info().Str("name", ep.Name).Str("url", ep.URL).Msg("endpoint registered")
+	agg := &Aggregator{
+		endpoints: parsed,
+		client:    &http.Client{Timeout: 5 * time.Second},
+		logger:    log.Logger,
 	}
-	return nil
+
+	agg.logger.Info().Msg("aggregating metrics from configured endpoints")
+	for _, ep := range agg.endpoints {
+		agg.logger.Info().Str("name", ep.Name).Str("url", ep.URL).Msg("endpoint registered")
+	}
+	return agg, nil
+}
+
+// Endpoints returns the configured endpoints (read-only copy).
+func (a *Aggregator) Endpoints() []Endpoint {
+	out := make([]Endpoint, len(a.endpoints))
+	copy(out, a.endpoints)
+	return out
 }
 
 // AggregateMetrics fetches metrics concurrently, strips metadata lines,
 // injects origin_container labels, and merges them with self-instrumentation.
-func AggregateMetrics() (string, error) {
-	if len(endpoints) == 0 {
+func (a *Aggregator) AggregateMetrics() (string, error) {
+	if len(a.endpoints) == 0 {
 		return "", fmt.Errorf("no endpoints configured")
 	}
 
-	results := make([]scrapeResult, len(endpoints))
+	results := make([]scrapeResult, len(a.endpoints))
 	var wg sync.WaitGroup
 
-	for i, ep := range endpoints {
+	for i, ep := range a.endpoints {
 		wg.Add(1)
 		go func(idx int, ep Endpoint) {
 			defer wg.Done()
 			start := time.Now()
 
-			resp, err := scrapeClient.Get(ep.URL)
+			resp, err := a.client.Get(ep.URL)
 			if err != nil {
-				log.Error().Err(err).Str("url", ep.URL).Msg("HTTP GET failed")
+				a.logger.Error().Err(err).Str("url", ep.URL).Msg("HTTP GET failed")
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
 			if resp.StatusCode != http.StatusOK {
-				log.Warn().Int("status_code", resp.StatusCode).Str("url", ep.URL).Msg("non-200 response")
+				a.logger.Warn().Int("status_code", resp.StatusCode).Str("url", ep.URL).Msg("non-200 response")
 				resp.Body.Close()
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
@@ -132,7 +141,7 @@ func AggregateMetrics() (string, error) {
 			body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 			resp.Body.Close()
 			if err != nil {
-				log.Error().Err(err).Str("url", ep.URL).Msg("read body failed")
+				a.logger.Error().Err(err).Str("url", ep.URL).Msg("read body failed")
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
@@ -160,7 +169,7 @@ func AggregateMetrics() (string, error) {
 		"# HELP metrics_aggregator_scrape_success Whether the last scrape of an endpoint succeeded.",
 		"# TYPE metrics_aggregator_scrape_success gauge",
 	)
-	for i, ep := range endpoints {
+	for i, ep := range a.endpoints {
 		val := 0
 		if results[i].success {
 			val = 1
@@ -171,7 +180,7 @@ func AggregateMetrics() (string, error) {
 		"# HELP metrics_aggregator_scrape_duration_seconds Duration of the last scrape in seconds.",
 		"# TYPE metrics_aggregator_scrape_duration_seconds gauge",
 	)
-	for i, ep := range endpoints {
+	for i, ep := range a.endpoints {
 		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_duration_seconds{endpoint=%q} %.3f", ep.Name, results[i].duration.Seconds()))
 	}
 
@@ -193,6 +202,44 @@ func AggregateMetrics() (string, error) {
 	}
 
 	return strings.Join(merged, "\n") + "\n", nil
+}
+
+// --- Backward-compatible package-level wrappers (removed in step 3) ---
+
+var (
+	endpoints         []Endpoint
+	defaultAggregator *Aggregator
+	scrapeClient      = &http.Client{Timeout: 5 * time.Second}
+)
+
+// SetupEndpoints populates the global endpoints slice.
+// Deprecated: use NewAggregator instead.
+func SetupEndpoints() error {
+	zerolog.TimeFieldFormat = time.RFC3339
+	endpoints = nil
+
+	env := os.Getenv(metricsEnvVariableName)
+	agg, err := NewAggregator(env)
+	if err != nil {
+		return err
+	}
+	defaultAggregator = agg
+	endpoints = agg.endpoints
+	return nil
+}
+
+// AggregateMetrics is the package-level wrapper.
+// Deprecated: use (*Aggregator).AggregateMetrics instead.
+func AggregateMetrics() (string, error) {
+	if len(endpoints) == 0 {
+		return "", fmt.Errorf("no endpoints configured")
+	}
+	agg := &Aggregator{
+		endpoints: endpoints,
+		client:    scrapeClient,
+		logger:    log.Logger,
+	}
+	return agg.AggregateMetrics()
 }
 
 // addCustomLabel injects origin_container into a metric line.
