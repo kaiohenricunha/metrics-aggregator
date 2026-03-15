@@ -1,3 +1,4 @@
+// Package main runs the metrics-aggregator HTTP server.
 package main
 
 import (
@@ -52,6 +53,9 @@ func main() {
 	addr := ":" + port
 
 	log.Info().Str("addr", addr).Msg("HTTP server starting")
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "ok")
+	})
 	http.HandleFunc("/metrics", metricsHandler)
 
 	if err := http.ListenAndServe(addr, nil); err != nil {
