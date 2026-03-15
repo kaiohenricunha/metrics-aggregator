@@ -98,6 +98,7 @@ jobs:
     steps:
       - name: Scan image with Trivy
         run: |
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
