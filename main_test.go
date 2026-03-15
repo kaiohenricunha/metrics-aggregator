@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -312,5 +313,35 @@ func TestMetricsHandler_EnforcesMaxInflight(t *testing.T) {
 
 	if err := <-errCh; err != nil {
 		t.Fatalf("first request failed: %v", err)
+	}
+}
+
+func TestGenerateRequestID_FallbackWhenEntropyFails(t *testing.T) {
+	previousRandRead := randRead
+	randRead = func(_ []byte) (int, error) {
+		return 0, errors.New("entropy source unavailable")
+	}
+	defer func() { randRead = previousRandRead }()
+
+	id1 := generateRequestID()
+	id2 := generateRequestID()
+
+	if len(id1) != 32 || len(id2) != 32 {
+		t.Fatalf("expected 32-char hex IDs, got %q (%d) and %q (%d)", id1, len(id1), id2, len(id2))
+	}
+	if id1 == id2 {
+		t.Fatalf("fallback request IDs must remain unique, both were %q", id1)
+	}
+}
+
+func TestStatusRecorder_TracksBytesOnErrorResponses(t *testing.T) {
+	rec := &statusRecorder{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK}
+	http.Error(rec, "too many concurrent scrape requests", http.StatusServiceUnavailable)
+
+	if rec.status != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, rec.status)
+	}
+	if rec.bytes == 0 {
+		t.Fatal("expected statusRecorder to track bytes written by http.Error")
 	}
 }

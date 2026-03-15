@@ -41,3 +41,5 @@ jobs:
         run: revive -formatter friendly ./...
 
       - uses: golang/govulncheck-action@v1
+        with:
+          repo-checkout: false

@@ -121,9 +121,19 @@ else
   assert_grep 'origin_container="app-b"' "$EVIDENCE_DIR/metrics-raw.txt" \
     "origin_container=app-b present"
 
-  # no duplicate metadata (only self-instrumentation TYPE lines)
-  TYPE_COUNT=$(grep -c '^# TYPE' "$EVIDENCE_DIR/metrics-raw.txt" || echo 0)
-  assert_eq "$TYPE_COUNT" "4" "only 4 # TYPE lines (self-instrumentation)"
+  # only self-instrumentation metadata should be emitted
+  assert_grep '^# TYPE metrics_aggregator_scrape_success gauge$' \
+    "$EVIDENCE_DIR/metrics-raw.txt" "self TYPE: scrape_success gauge"
+  assert_grep '^# TYPE metrics_aggregator_scrape_duration_seconds gauge$' \
+    "$EVIDENCE_DIR/metrics-raw.txt" "self TYPE: scrape_duration_seconds gauge"
+  assert_grep '^# TYPE metrics_aggregator_scrape_invalid_samples gauge$' \
+    "$EVIDENCE_DIR/metrics-raw.txt" "self TYPE: scrape_invalid_samples gauge"
+  assert_grep '^# TYPE metrics_aggregator_requests_total counter$' \
+    "$EVIDENCE_DIR/metrics-raw.txt" "self TYPE: requests_total counter"
+  assert_grep '^# TYPE metrics_aggregator_errors_total counter$' \
+    "$EVIDENCE_DIR/metrics-raw.txt" "self TYPE: errors_total counter"
+  NON_SELF_TYPE_COUNT=$(awk '/^# TYPE/ && $0 !~ /^# TYPE metrics_aggregator_/ {count++} END {print count+0}' "$EVIDENCE_DIR/metrics-raw.txt")
+  assert_eq "$NON_SELF_TYPE_COUNT" "0" "only self # TYPE metadata is emitted"
 
   # self-instrumentation metrics
   assert_grep 'metrics_aggregator_scrape_success{endpoint="app-a"} 1' \

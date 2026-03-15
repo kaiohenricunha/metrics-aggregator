@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -17,12 +18,15 @@ func mustRead(t *testing.T, path string) string {
 
 func TestDockerfile_RunsAsNonRoot(t *testing.T) {
 	content := mustRead(t, "Dockerfile")
-	lower := strings.ToLower(content)
 
-	if !strings.Contains(lower, "user ") {
+	userDirective := regexp.MustCompile(`(?mi)^\s*USER\s+([^\s#]+)\s*$`)
+	matches := userDirective.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
 		t.Fatalf("Dockerfile must define a non-root USER")
 	}
-	if strings.Contains(lower, "user root") || strings.Contains(lower, "user 0") {
+
+	finalUser := strings.ToLower(strings.TrimSpace(matches[len(matches)-1][1]))
+	if finalUser == "root" || finalUser == "0" || strings.HasPrefix(finalUser, "root:") || strings.HasPrefix(finalUser, "0:") {
 		t.Fatalf("Dockerfile must not run final image as root")
 	}
 }

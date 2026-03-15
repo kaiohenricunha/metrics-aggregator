@@ -185,10 +185,19 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 				return
 			}
 
-			body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
+			body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
 			resp.Body.Close()
 			if err != nil {
 				logger.Error().Err(err).Str("url", sanitizedURL).Msg("read body failed")
+				results[idx] = scrapeResult{duration: time.Since(start)}
+				return
+			}
+			if len(body) > maxBodySize {
+				logger.Warn().
+					Str("endpoint", ep.Name).
+					Str("url", sanitizedURL).
+					Int("max_body_size", maxBodySize).
+					Msg("scrape body exceeded size limit; discarding endpoint payload")
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
@@ -245,17 +254,17 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_duration_seconds{endpoint=%q} %.3f", ep.Name, results[i].duration.Seconds()))
 	}
 	merged = append(merged,
-		"# HELP metrics_aggregator_scrape_invalid_samples_total Number of invalid scrape samples dropped from the last scrape.",
-		"# TYPE metrics_aggregator_scrape_invalid_samples_total gauge",
+		"# HELP metrics_aggregator_scrape_invalid_samples Number of invalid scrape samples dropped from the last scrape.",
+		"# TYPE metrics_aggregator_scrape_invalid_samples gauge",
 	)
 	for i, ep := range a.endpoints {
-		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_invalid_samples_total{endpoint=%q} %d", ep.Name, results[i].invalidSamples))
+		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_invalid_samples{endpoint=%q} %d", ep.Name, results[i].invalidSamples))
 	}
 	merged = append(merged,
-		"# HELP metrics_aggregator_requests_total Total number of /metrics requests served.",
+		"# HELP metrics_aggregator_requests_total Total number of aggregation executions.",
 		"# TYPE metrics_aggregator_requests_total counter",
 		fmt.Sprintf("metrics_aggregator_requests_total %d", a.requestsTotal.Load()),
-		"# HELP metrics_aggregator_errors_total Total number of failed /metrics requests (all endpoints down).",
+		"# HELP metrics_aggregator_errors_total Total number of failed aggregation executions (all endpoints down).",
 		"# TYPE metrics_aggregator_errors_total counter",
 		fmt.Sprintf("metrics_aggregator_errors_total %d", a.errorsTotal.Load()),
 	)

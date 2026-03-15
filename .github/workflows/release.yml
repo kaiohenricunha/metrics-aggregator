@@ -5,43 +5,40 @@ on:
     workflows: ["Docker publish"]
     types: [completed]
 
+permissions:
+  contents: read
+
 jobs:
   resolve-tag:
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch != 'main' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha }}
-
-      - name: Resolve semantic tag for triggering commit
+      - name: Resolve semantic tag for triggering run
         id: resolve
-        run: |
-          set -euo pipefail
-          sha="${{ github.event.workflow_run.head_sha }}"
-          triggered_ref="${{ github.event.workflow_run.head_branch }}"
-          mapfile -t tags < <(git tag --points-at "$sha" --list 'v*.*.*' | sort -Vr)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const headBranch = context.payload.workflow_run?.head_branch || '';
+            const headSha = context.payload.workflow_run?.head_sha || '';
+            const semver = /^v\d+\.\d+\.\d+$/;
+            const shaRe = /^[0-9a-f]{40}$/i;
 
-          if [ "${#tags[@]}" -eq 0 ]; then
-            echo "::error::No semantic tag found for triggering commit ${sha}"
-            exit 1
-          fi
+            if (!semver.test(headBranch)) {
+              core.setFailed(`workflow_run head_branch "${headBranch}" is not a semver tag (vX.Y.Z)`);
+              return;
+            }
+            if (!shaRe.test(headSha)) {
+              core.setFailed(`workflow_run head_sha "${headSha}" is not a 40-character SHA`);
+              return;
+            }
 
-          selected_tag="${tags[0]}"
-          if [ -n "$triggered_ref" ]; then
-            if ! printf '%s\n' "${tags[@]}" | grep -Fxq "$triggered_ref"; then
-              echo "::error::Trigger ref ${triggered_ref} is not a semantic tag on ${sha}"
-              exit 1
-            fi
-            selected_tag="$triggered_ref"
-          fi
-
-          echo "tag=$selected_tag" >> "$GITHUB_OUTPUT"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+            core.setOutput('tag', headBranch);
+            core.setOutput('sha', headSha);
 
   release:
     needs: resolve-tag
@@ -62,6 +59,16 @@ jobs:
         with:
           fetch-depth: 0
           ref: refs/tags/${{ needs.resolve-tag.outputs.tag }}
+
+      - name: Verify resolved tag commit matches triggering SHA
+        run: |
+          set -euo pipefail
+          expected_sha="${{ needs.resolve-tag.outputs.sha }}"
+          actual_sha="$(git rev-list -n 1 "refs/tags/${{ needs.resolve-tag.outputs.tag }}")"
+          if [ "$actual_sha" != "$expected_sha" ]; then
+            echo "::error::Resolved tag does not point to triggering SHA (expected $expected_sha, got $actual_sha)"
+            exit 1
+          fi
 
       - uses: goreleaser/goreleaser-action@v7
         with:

@@ -58,9 +58,7 @@ func TestReleaseWorkflow_RequiresTaggedSuccessfulDockerRun(t *testing.T) {
 	content := mustReadText(t, ".github/workflows/release.yml")
 	required := []string{
 		"github.event.workflow_run.conclusion == 'success'",
-		"github.event.workflow_run.head_branch != 'main'",
-		"github.event.workflow_run.head_sha",
-		"git tag --points-at",
+		"github.event.workflow_run.event == 'push'",
 		"ref: refs/tags/${{ needs.resolve-tag.outputs.tag }}",
 	}
 	for _, token := range required {
@@ -70,10 +68,59 @@ func TestReleaseWorkflow_RequiresTaggedSuccessfulDockerRun(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflow_DoesNotCheckoutWorkflowRunHeadSHA(t *testing.T) {
+	content := mustReadText(t, ".github/workflows/release.yml")
+	if strings.Contains(content, "ref: ${{ github.event.workflow_run.head_sha }}") {
+		t.Fatal("release.yml must not checkout workflow_run.head_sha in workflow_run context")
+	}
+}
+
+func TestReleaseWorkflow_ResolveTagJobUsesReadOnlyPermissions(t *testing.T) {
+	content := mustReadText(t, ".github/workflows/release.yml")
+	re := regexp.MustCompile(`(?ms)resolve-tag:\s*\n(?:[^\n]*\n)*?\s+permissions:\s*\n\s+contents:\s+read`)
+	if !re.MatchString(content) {
+		t.Fatal("release.yml resolve-tag job must define minimal read-only permissions")
+	}
+}
+
 func TestDockerPublish_ReferencesValidTrivyStepID(t *testing.T) {
 	content := mustReadText(t, ".github/workflows/docker-publish.yml")
 	if strings.Contains(content, "steps.trivy.outcome") && !strings.Contains(content, "id: trivy") {
 		t.Fatal("docker-publish references steps.trivy.outcome but trivy step has no id: trivy")
+	}
+}
+
+func TestLintWorkflow_GovulncheckDisablesNestedCheckout(t *testing.T) {
+	content := mustReadText(t, ".github/workflows/lint.yml")
+	re := regexp.MustCompile(`(?ms)golang/govulncheck-action@v1.*repo-checkout:\s*false`)
+	if !re.MatchString(content) {
+		t.Fatal("lint workflow must set repo-checkout: false for golang/govulncheck-action")
+	}
+}
+
+func TestDockerPublish_ManualRunsDoNotAutoPublishFromArbitraryRefs(t *testing.T) {
+	content := mustReadText(t, ".github/workflows/docker-publish.yml")
+
+	required := []string{
+		"id: publish-policy",
+		"should_publish",
+		"steps.publish-policy.outputs.should_publish == 'true'",
+		"needs.build.outputs.should_publish == 'true'",
+	}
+	for _, token := range required {
+		if !strings.Contains(content, token) {
+			t.Fatalf("docker-publish.yml missing publish-gating token %q", token)
+		}
+	}
+
+	signGate := regexp.MustCompile(`(?ms)Sign the published Docker image.*if:\s*\$\{\{\s*steps\.publish-policy\.outputs\.should_publish == 'true'\s*\}\}`)
+	if !signGate.MatchString(content) {
+		t.Fatal("docker-publish signing step must be gated by publish-policy output")
+	}
+
+	scanGate := regexp.MustCompile(`(?ms)scan-image:.*if:\s*\$\{\{\s*needs\.build\.outputs\.should_publish == 'true'\s*\}\}`)
+	if !scanGate.MatchString(content) {
+		t.Fatal("docker-publish scan-image job must be gated by build.should_publish output")
 	}
 }
 

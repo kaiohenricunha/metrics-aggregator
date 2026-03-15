@@ -420,6 +420,8 @@ func TestAggregator_SelfInstrumentation(t *testing.T) {
 		`metrics_aggregator_scrape_success{endpoint="mysvc"} 1`,
 		"# TYPE metrics_aggregator_scrape_duration_seconds gauge",
 		`metrics_aggregator_scrape_duration_seconds{endpoint="mysvc"}`,
+		"# TYPE metrics_aggregator_scrape_invalid_samples gauge",
+		`metrics_aggregator_scrape_invalid_samples{endpoint="mysvc"} 0`,
 		"# TYPE metrics_aggregator_requests_total counter",
 		"metrics_aggregator_requests_total 1",
 		"# TYPE metrics_aggregator_errors_total counter",
@@ -603,5 +605,72 @@ func TestAggregator_RejectsInvalidSampleValues(t *testing.T) {
 	_, err := agg.AggregateMetrics(context.Background())
 	if err == nil {
 		t.Fatal("expected invalid sample payload to be rejected")
+	}
+}
+
+func TestAggregator_InvalidSamplesMetricUsesNonTotalGaugeName(t *testing.T) {
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("up 1\n"))
+	}))
+	defer good.Close()
+
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("http_requests_total oops\n"))
+	}))
+	defer bad.Close()
+
+	agg := newTestAggregator([]Endpoint{
+		{Name: "good", URL: good.URL},
+		{Name: "bad", URL: bad.URL},
+	})
+
+	res, err := agg.AggregateMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("expected partial success, got error: %v", err)
+	}
+
+	if !strings.Contains(res, "# TYPE metrics_aggregator_scrape_invalid_samples gauge") {
+		t.Fatalf("expected invalid samples gauge type line, got:\n%s", res)
+	}
+	if strings.Contains(res, "metrics_aggregator_scrape_invalid_samples_total") {
+		t.Fatalf("invalid samples gauge metric must not use _total suffix, got:\n%s", res)
+	}
+	if !strings.Contains(res, `metrics_aggregator_scrape_invalid_samples{endpoint="bad"} 1`) {
+		t.Fatalf("expected invalid sample count for bad endpoint, got:\n%s", res)
+	}
+}
+
+func TestAggregator_OversizedResponseIsRejectedWithoutPartialIngestion(t *testing.T) {
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("up 1\n"))
+	}))
+	defer good.Close()
+
+	line := "oversized_metric 1\n"
+	repeat := (maxBodySize / len(line)) + 128
+	oversizedPayload := strings.Repeat(line, repeat)
+	oversized := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(oversizedPayload))
+	}))
+	defer oversized.Close()
+
+	agg := newTestAggregator([]Endpoint{
+		{Name: "good", URL: good.URL},
+		{Name: "big", URL: oversized.URL},
+	})
+
+	res, err := agg.AggregateMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("expected partial success when one endpoint is oversized, got: %v", err)
+	}
+
+	if !strings.Contains(res, `metrics_aggregator_scrape_success{endpoint="big"} 0`) {
+		t.Fatalf("expected oversized endpoint to be marked unsuccessful, got:\n%s", res)
+	}
+	if strings.Contains(res, `oversized_metric{origin_container="big"}`) {
+		t.Fatalf("oversized endpoint data must not be partially ingested, got:\n%s", res)
+	}
+	if !strings.Contains(res, `up{origin_container="good"} 1`) {
+		t.Fatalf("expected healthy endpoint metrics to remain, got:\n%s", res)
 	}
 }

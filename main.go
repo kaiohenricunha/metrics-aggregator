@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,6 +45,7 @@ func init() {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
+	bytes  int
 }
 
 type httpServerConfig struct {
@@ -63,15 +66,36 @@ type metricsCache struct {
 	inFlight  chan struct{}
 }
 
+var (
+	randRead                 = rand.Read
+	requestIDFallbackCounter atomic.Uint64
+)
+
 func (sr *statusRecorder) WriteHeader(code int) {
 	sr.status = code
 	sr.ResponseWriter.WriteHeader(code)
 }
 
+func (sr *statusRecorder) Write(p []byte) (int, error) {
+	if sr.status == 0 {
+		sr.status = http.StatusOK
+	}
+	n, err := sr.ResponseWriter.Write(p)
+	sr.bytes += n
+	return n, err
+}
+
 // generateRequestID returns a 32-char hex string from crypto/rand.
 func generateRequestID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	n, err := randRead(b)
+	if err != nil || n != len(b) {
+		fallback := make([]byte, 16)
+		binary.BigEndian.PutUint64(fallback[:8], uint64(time.Now().UnixNano()))
+		binary.BigEndian.PutUint64(fallback[8:], requestIDFallbackCounter.Add(1))
+		log.Warn().Err(err).Int("bytes_read", n).Msg("crypto/rand unavailable; using fallback request ID generator")
+		return hex.EncodeToString(fallback)
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -154,7 +178,7 @@ func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.H
 				Str("path", r.URL.Path).
 				Int("status", rec.status).
 				Dur("duration", time.Since(start)).
-				Int("bytes", 0).
+				Int("bytes", rec.bytes).
 				Msg("request rejected by concurrency limit")
 			return
 		}
@@ -169,18 +193,18 @@ func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.H
 				Str("path", r.URL.Path).
 				Int("status", rec.status).
 				Dur("duration", time.Since(start)).
-				Int("bytes", 0).
+				Int("bytes", rec.bytes).
 				Msg("request completed")
 			return
 		}
 
-		n, _ := fmt.Fprint(rec, metrics)
+		_, _ = fmt.Fprint(rec, metrics)
 		logger.Info().
 			Str("method", r.Method).
 			Str("path", r.URL.Path).
 			Int("status", rec.status).
 			Dur("duration", time.Since(start)).
-			Int("bytes", n).
+			Int("bytes", rec.bytes).
 			Msg("request completed")
 	}
 }
