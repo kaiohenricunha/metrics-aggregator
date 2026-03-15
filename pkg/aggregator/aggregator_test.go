@@ -417,10 +417,74 @@ func TestAggregator_SelfInstrumentation(t *testing.T) {
 		`metrics_aggregator_scrape_success{endpoint="mysvc"} 1`,
 		"# TYPE metrics_aggregator_scrape_duration_seconds gauge",
 		`metrics_aggregator_scrape_duration_seconds{endpoint="mysvc"}`,
+		"# TYPE metrics_aggregator_requests_total counter",
+		"metrics_aggregator_requests_total 1",
+		"# TYPE metrics_aggregator_errors_total counter",
+		"metrics_aggregator_errors_total 0",
 	}
 	for _, c := range checks {
 		if !strings.Contains(res, c) {
 			t.Errorf("missing %q in output:\n%s", c, res)
 		}
+	}
+}
+
+// TestAggregator_SelfInstrumentation_Extended verifies request/error counters.
+func TestAggregator_SelfInstrumentation_Extended(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv.Close()
+
+	agg := newTestAggregator([]Endpoint{{Name: "svc", URL: srv.URL}})
+
+	// First call
+	res1, err := agg.AggregateMetrics()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(res1, "metrics_aggregator_requests_total 1") {
+		t.Fatalf("expected requests_total 1, got:\n%s", res1)
+	}
+
+	// Second call
+	res2, err := agg.AggregateMetrics()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(res2, "metrics_aggregator_requests_total 2") {
+		t.Fatalf("expected requests_total 2, got:\n%s", res2)
+	}
+	if !strings.Contains(res2, "metrics_aggregator_errors_total 0") {
+		t.Fatalf("expected errors_total 0, got:\n%s", res2)
+	}
+}
+
+// TestAggregator_ErrorCounter verifies errors_total increments on failure.
+func TestAggregator_ErrorCounter(t *testing.T) {
+	agg := newTestAggregator([]Endpoint{{Name: "dead", URL: "http://127.0.0.1:1"}})
+
+	_, err := agg.AggregateMetrics()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	// Call again with a working endpoint to see the counter
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv.Close()
+	agg.endpoints = []Endpoint{{Name: "ok", URL: srv.URL}}
+
+	res, err := agg.AggregateMetrics()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// errors_total should be 1 (from the failed call)
+	if !strings.Contains(res, "metrics_aggregator_errors_total 1") {
+		t.Fatalf("expected errors_total 1, got:\n%s", res)
+	}
+	if !strings.Contains(res, "metrics_aggregator_requests_total 2") {
+		t.Fatalf("expected requests_total 2, got:\n%s", res)
 	}
 }

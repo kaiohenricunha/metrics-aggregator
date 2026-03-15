@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -24,24 +26,70 @@ func init() {
 	zerolog.SetGlobalLevel(level)
 }
 
+// statusRecorder wraps http.ResponseWriter to capture the status code.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// generateRequestID returns a 32-char hex string from crypto/rand.
+func generateRequestID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// requestIDMiddleware injects a request ID into the response and logger context.
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-Id")
+		if id == "" {
+			id = generateRequestID()
+		}
+		w.Header().Set("X-Request-Id", id)
+
+		logger := log.With().Str("request_id", id).Logger()
+		ctx := logger.WithContext(r.Context())
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func makeMetricsHandler(agg *aggregator.Aggregator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		log.Info().Msg("/metrics request started")
+		logger := zerolog.Ctx(r.Context())
 
 		w.Header().Set("Content-Type", "text/plain")
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
 		metrics, err := agg.AggregateMetrics()
 		if err != nil {
-			log.Error().Err(err).Msg("aggregation failure")
-			http.Error(w, "failed to aggregate metrics", http.StatusInternalServerError)
+			logger.Error().Err(err).Msg("aggregation failure")
+			http.Error(rec, "failed to aggregate metrics", http.StatusInternalServerError)
+			rec.status = http.StatusInternalServerError
+			logger.Info().
+				Str("method", r.Method).
+				Str("path", r.URL.Path).
+				Int("status", rec.status).
+				Dur("duration", time.Since(start)).
+				Int("bytes", 0).
+				Msg("request completed")
 			return
 		}
 
-		fmt.Fprint(w, metrics)
-		log.Info().
+		n, _ := fmt.Fprint(rec, metrics)
+		logger.Info().
+			Str("method", r.Method).
+			Str("path", r.URL.Path).
+			Int("status", rec.status).
 			Dur("duration", time.Since(start)).
-			Int("bytes", len(metrics)).
-			Msg("/metrics request completed")
+			Int("bytes", n).
+			Msg("request completed")
 	}
 }
 
@@ -52,7 +100,8 @@ func run(ctx context.Context, agg *aggregator.Aggregator, addr string) error {
 	})
 	mux.HandleFunc("/metrics", makeMetricsHandler(agg))
 
-	srv := &http.Server{Addr: addr, Handler: mux}
+	handler := requestIDMiddleware(mux)
+	srv := &http.Server{Addr: addr, Handler: handler}
 
 	go func() {
 		<-ctx.Done()

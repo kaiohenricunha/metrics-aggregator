@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -39,9 +40,11 @@ type scrapeResult struct {
 
 // Aggregator scrapes and merges Prometheus metrics from multiple endpoints.
 type Aggregator struct {
-	endpoints []Endpoint
-	client    *http.Client
-	logger    zerolog.Logger
+	endpoints     []Endpoint
+	client        *http.Client
+	logger        zerolog.Logger
+	requestsTotal atomic.Int64
+	errorsTotal   atomic.Int64
 }
 
 // NewAggregator parses endpointsConfig (JSON map or comma-separated URLs)
@@ -111,7 +114,10 @@ func (a *Aggregator) Endpoints() []Endpoint {
 // AggregateMetrics fetches metrics concurrently, strips metadata lines,
 // injects origin_container labels, and merges them with self-instrumentation.
 func (a *Aggregator) AggregateMetrics() (string, error) {
+	a.requestsTotal.Add(1)
+
 	if len(a.endpoints) == 0 {
+		a.errorsTotal.Add(1)
 		return "", fmt.Errorf("no endpoints configured")
 	}
 
@@ -182,6 +188,14 @@ func (a *Aggregator) AggregateMetrics() (string, error) {
 	for i, ep := range a.endpoints {
 		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_duration_seconds{endpoint=%q} %.3f", ep.Name, results[i].duration.Seconds()))
 	}
+	merged = append(merged,
+		"# HELP metrics_aggregator_requests_total Total number of /metrics requests served.",
+		"# TYPE metrics_aggregator_requests_total counter",
+		fmt.Sprintf("metrics_aggregator_requests_total %d", a.requestsTotal.Load()),
+		"# HELP metrics_aggregator_errors_total Total number of failed /metrics requests (all endpoints down).",
+		"# TYPE metrics_aggregator_errors_total counter",
+		fmt.Sprintf("metrics_aggregator_errors_total %d", a.errorsTotal.Load()),
+	)
 
 	// Append scraped metric lines
 	for _, r := range results {
@@ -197,6 +211,7 @@ func (a *Aggregator) AggregateMetrics() (string, error) {
 		}
 	}
 	if !anySuccess {
+		a.errorsTotal.Add(1)
 		return "", fmt.Errorf("no metrics collected")
 	}
 

@@ -137,3 +137,52 @@ func TestRun_GracefulShutdown(t *testing.T) {
 	}
 	t.Fatal("server did not shut down after context cancellation")
 }
+
+func TestRequestIDMiddleware_GeneratesID(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	id := resp.Header.Get("X-Request-Id")
+	if id == "" {
+		t.Fatal("expected X-Request-Id header to be set")
+	}
+	if len(id) != 32 {
+		t.Fatalf("expected 32-char hex ID, got %q (len=%d)", id, len(id))
+	}
+}
+
+func TestRequestIDMiddleware_PreservesID(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	req, _ := http.NewRequest("GET", "http://"+addr+"/metrics", nil)
+	req.Header.Set("X-Request-Id", "abc123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	id := resp.Header.Get("X-Request-Id")
+	if id != "abc123" {
+		t.Fatalf("expected X-Request-Id 'abc123', got %q", id)
+	}
+}
