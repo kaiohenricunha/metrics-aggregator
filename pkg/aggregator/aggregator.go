@@ -3,6 +3,7 @@
 package aggregator
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -113,8 +114,15 @@ func (a *Aggregator) Endpoints() []Endpoint {
 
 // AggregateMetrics fetches metrics concurrently, strips metadata lines,
 // injects origin_container labels, and merges them with self-instrumentation.
-func (a *Aggregator) AggregateMetrics() (string, error) {
+// The context carries the request-scoped logger (if any) for correlated log output.
+func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 	a.requestsTotal.Add(1)
+
+	// Use request-scoped logger if available, fall back to a.logger.
+	logger := zerolog.Ctx(ctx)
+	if logger.GetLevel() == zerolog.Disabled {
+		logger = &a.logger
+	}
 
 	if len(a.endpoints) == 0 {
 		a.errorsTotal.Add(1)
@@ -132,12 +140,12 @@ func (a *Aggregator) AggregateMetrics() (string, error) {
 
 			resp, err := a.client.Get(ep.URL)
 			if err != nil {
-				a.logger.Error().Err(err).Str("url", ep.URL).Msg("HTTP GET failed")
+				logger.Error().Err(err).Str("url", ep.URL).Msg("HTTP GET failed")
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
 			if resp.StatusCode != http.StatusOK {
-				a.logger.Warn().Int("status_code", resp.StatusCode).Str("url", ep.URL).Msg("non-200 response")
+				logger.Warn().Int("status_code", resp.StatusCode).Str("url", ep.URL).Msg("non-200 response")
 				resp.Body.Close()
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
@@ -146,7 +154,7 @@ func (a *Aggregator) AggregateMetrics() (string, error) {
 			body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 			resp.Body.Close()
 			if err != nil {
-				a.logger.Error().Err(err).Str("url", ep.URL).Msg("read body failed")
+				logger.Error().Err(err).Str("url", ep.URL).Msg("read body failed")
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}

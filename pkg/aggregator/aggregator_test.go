@@ -1,6 +1,8 @@
 package aggregator
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -138,7 +141,7 @@ func TestAggregator_AggregateMetrics(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	res, err := agg.AggregateMetrics()
+	res, err := agg.AggregateMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("aggregate error: %v", err)
 	}
@@ -168,11 +171,11 @@ func TestAggregator_Isolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res1, err := agg1.AggregateMetrics()
+	res1, err := agg1.AggregateMetrics(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	res2, err := agg2.AggregateMetrics()
+	res2, err := agg2.AggregateMetrics(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +198,7 @@ func TestAggregator_Isolation(t *testing.T) {
 func TestAggregator_ErrorPaths(t *testing.T) {
 	t.Run("no endpoints", func(t *testing.T) {
 		agg := newTestAggregator(nil)
-		_, err := agg.AggregateMetrics()
+		_, err := agg.AggregateMetrics(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "no endpoints configured") {
 			t.Fatalf("expected 'no endpoints configured', got %v", err)
 		}
@@ -207,7 +210,7 @@ func TestAggregator_ErrorPaths(t *testing.T) {
 		}))
 		defer srv.Close()
 		agg := newTestAggregator([]Endpoint{{Name: "bad", URL: srv.URL}})
-		_, err := agg.AggregateMetrics()
+		_, err := agg.AggregateMetrics(context.Background())
 		if err == nil {
 			t.Fatal("expected error when only endpoint returns 500")
 		}
@@ -215,7 +218,7 @@ func TestAggregator_ErrorPaths(t *testing.T) {
 
 	t.Run("unreachable endpoint", func(t *testing.T) {
 		agg := newTestAggregator([]Endpoint{{Name: "down", URL: "http://127.0.0.1:1"}})
-		_, err := agg.AggregateMetrics()
+		_, err := agg.AggregateMetrics(context.Background())
 		if err == nil {
 			t.Fatal("expected error for unreachable endpoint")
 		}
@@ -230,7 +233,7 @@ func TestAggregator_ErrorPaths(t *testing.T) {
 			{Name: "bad1", URL: srv.URL},
 			{Name: "bad2", URL: "http://127.0.0.1:1"},
 		})
-		_, err := agg.AggregateMetrics()
+		_, err := agg.AggregateMetrics(context.Background())
 		if err == nil {
 			t.Fatal("expected error when all endpoints fail")
 		}
@@ -250,7 +253,7 @@ func TestAggregator_ErrorPaths(t *testing.T) {
 			{Name: "healthy", URL: good.URL},
 			{Name: "broken", URL: bad.URL},
 		})
-		res, err := agg.AggregateMetrics()
+		res, err := agg.AggregateMetrics(context.Background())
 		if err != nil {
 			t.Fatalf("partial success should not error: %v", err)
 		}
@@ -353,7 +356,7 @@ func TestAggregator_DuplicateMetricFamilies(t *testing.T) {
 		{Name: "svc1", URL: srv1.URL},
 		{Name: "svc2", URL: srv2.URL},
 	})
-	res, err := agg.AggregateMetrics()
+	res, err := agg.AggregateMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -378,7 +381,7 @@ func TestAggregator_ValidOutput(t *testing.T) {
 	defer srv.Close()
 
 	agg := newTestAggregator([]Endpoint{{Name: "svc", URL: srv.URL}})
-	res, err := agg.AggregateMetrics()
+	res, err := agg.AggregateMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -407,7 +410,7 @@ func TestAggregator_SelfInstrumentation(t *testing.T) {
 	defer srv.Close()
 
 	agg := newTestAggregator([]Endpoint{{Name: "mysvc", URL: srv.URL}})
-	res, err := agg.AggregateMetrics()
+	res, err := agg.AggregateMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -439,7 +442,7 @@ func TestAggregator_SelfInstrumentation_Extended(t *testing.T) {
 	agg := newTestAggregator([]Endpoint{{Name: "svc", URL: srv.URL}})
 
 	// First call
-	res1, err := agg.AggregateMetrics()
+	res1, err := agg.AggregateMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -448,7 +451,7 @@ func TestAggregator_SelfInstrumentation_Extended(t *testing.T) {
 	}
 
 	// Second call
-	res2, err := agg.AggregateMetrics()
+	res2, err := agg.AggregateMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -464,7 +467,7 @@ func TestAggregator_SelfInstrumentation_Extended(t *testing.T) {
 func TestAggregator_ErrorCounter(t *testing.T) {
 	agg := newTestAggregator([]Endpoint{{Name: "dead", URL: "http://127.0.0.1:1"}})
 
-	_, err := agg.AggregateMetrics()
+	_, err := agg.AggregateMetrics(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -476,7 +479,7 @@ func TestAggregator_ErrorCounter(t *testing.T) {
 	defer srv.Close()
 	agg.endpoints = []Endpoint{{Name: "ok", URL: srv.URL}}
 
-	res, err := agg.AggregateMetrics()
+	res, err := agg.AggregateMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -486,5 +489,24 @@ func TestAggregator_ErrorCounter(t *testing.T) {
 	}
 	if !strings.Contains(res, "metrics_aggregator_requests_total 2") {
 		t.Fatalf("expected requests_total 2, got:\n%s", res)
+	}
+}
+
+// TestAggregator_ContextLogger verifies that request-scoped logger fields appear in log output.
+func TestAggregator_ContextLogger(t *testing.T) {
+	var buf bytes.Buffer
+	logger := zerolog.New(&buf).With().Str("request_id", "test-req-42").Logger()
+	ctx := logger.WithContext(context.Background())
+
+	// Use a dead endpoint to trigger an error log line
+	agg := newTestAggregator([]Endpoint{{Name: "dead", URL: "http://127.0.0.1:1"}})
+	agg.AggregateMetrics(ctx)
+
+	output := buf.String()
+	if !strings.Contains(output, "test-req-42") {
+		t.Fatalf("expected request_id in log output, got: %s", output)
+	}
+	if !strings.Contains(output, "HTTP GET failed") {
+		t.Fatalf("expected 'HTTP GET failed' in log output, got: %s", output)
 	}
 }

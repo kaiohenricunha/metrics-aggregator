@@ -67,7 +67,7 @@ func makeMetricsHandler(agg *aggregator.Aggregator) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/plain")
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 
-		metrics, err := agg.AggregateMetrics()
+		metrics, err := agg.AggregateMetrics(r.Context())
 		if err != nil {
 			logger.Error().Err(err).Msg("aggregation failure")
 			http.Error(rec, "failed to aggregate metrics", http.StatusInternalServerError)
