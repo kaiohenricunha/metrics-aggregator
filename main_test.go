@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -184,5 +186,131 @@ func TestRequestIDMiddleware_PreservesID(t *testing.T) {
 	id := resp.Header.Get("X-Request-Id")
 	if id != "abc123" {
 		t.Fatalf("expected X-Request-Id 'abc123', got %q", id)
+	}
+}
+
+func TestLoadHTTPServerConfigFromEnv_Defaults(t *testing.T) {
+	t.Setenv("METRICS_CACHE_TTL", "")
+	t.Setenv("METRICS_MAX_INFLIGHT", "")
+	t.Setenv("METRICS_SERVER_READ_HEADER_TIMEOUT", "")
+	t.Setenv("METRICS_SERVER_READ_TIMEOUT", "")
+	t.Setenv("METRICS_SERVER_WRITE_TIMEOUT", "")
+	t.Setenv("METRICS_SERVER_IDLE_TIMEOUT", "")
+	t.Setenv("METRICS_SERVER_MAX_HEADER_BYTES", "")
+
+	cfg := loadHTTPServerConfigFromEnv()
+	if cfg.readHeaderTimeout != 2*time.Second {
+		t.Fatalf("expected default readHeaderTimeout=2s, got %s", cfg.readHeaderTimeout)
+	}
+	if cfg.readTimeout != 5*time.Second {
+		t.Fatalf("expected default readTimeout=5s, got %s", cfg.readTimeout)
+	}
+	if cfg.writeTimeout != 10*time.Second {
+		t.Fatalf("expected default writeTimeout=10s, got %s", cfg.writeTimeout)
+	}
+	if cfg.idleTimeout != 60*time.Second {
+		t.Fatalf("expected default idleTimeout=60s, got %s", cfg.idleTimeout)
+	}
+	if cfg.maxHeaderBytes != 1<<20 {
+		t.Fatalf("expected default maxHeaderBytes=1MiB, got %d", cfg.maxHeaderBytes)
+	}
+	if cfg.cacheTTL != time.Second {
+		t.Fatalf("expected default cacheTTL=1s, got %s", cfg.cacheTTL)
+	}
+	if cfg.maxInflight != 32 {
+		t.Fatalf("expected default maxInflight=32, got %d", cfg.maxInflight)
+	}
+}
+
+func TestMetricsHandler_DedupesConcurrentScrapes(t *testing.T) {
+	var backendHits atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := backendHits.Add(1)
+		w.Write([]byte(fmt.Sprintf("backend_hits_total %d\n", n)))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "2s")
+	t.Setenv("METRICS_MAX_INFLIGHT", "32")
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	const reqs = 20
+	var wg sync.WaitGroup
+	errCh := make(chan error, reqs)
+
+	for i := 0; i < reqs; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := http.Get("http://" + addr + "/metrics")
+			if err != nil {
+				errCh <- err
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				errCh <- fmt.Errorf("unexpected status %d", resp.StatusCode)
+				return
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("request error: %v", err)
+		}
+	}
+	if hits := backendHits.Load(); hits > 2 {
+		t.Fatalf("expected deduped scrape calls <= 2, got %d", hits)
+	}
+}
+
+func TestMetricsHandler_EnforcesMaxInflight(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "0s")
+	t.Setenv("METRICS_MAX_INFLIGHT", "1")
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := http.Get("http://" + addr + "/metrics")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			errCh <- fmt.Errorf("first request expected 200, got %d", resp.StatusCode)
+			return
+		}
+		errCh <- nil
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected second request to be rejected with 503, got %d", resp.StatusCode)
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("first request failed: %v", err)
 	}
 }

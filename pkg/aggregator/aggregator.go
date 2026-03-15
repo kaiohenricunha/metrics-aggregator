@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -20,12 +22,19 @@ import (
 
 // centralised port definitions
 const (
-	DefaultAggregatorPort  = "9090"
-	metricsEnvVariableName = "METRICS_ENDPOINTS"
-	maxBodySize            = 10 << 20 // 10 MiB
+	DefaultAggregatorPort       = "9090"
+	metricsEnvVariableName      = "METRICS_ENDPOINTS"
+	securityModeEnvVariableName = "METRICS_SECURITY_MODE"
+	securityModeStrict          = "strict"
+	securityModeLegacy          = "legacy"
+	defaultMetricsPath          = "/metrics"
+	maxBodySize                 = 10 << 20 // 10 MiB
 )
 
-var validName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var (
+	validName  = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	sampleLine = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{[^}]*\})?\s+(?:NaN|[+-]?Inf|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+\d+)?$`)
+)
 
 // Endpoint represents a Prometheus /metrics endpoint.
 type Endpoint struct {
@@ -34,9 +43,10 @@ type Endpoint struct {
 }
 
 type scrapeResult struct {
-	lines    []string
-	success  bool
-	duration time.Duration
+	lines          []string
+	success        bool
+	duration       time.Duration
+	invalidSamples int
 }
 
 // Aggregator scrapes and merges Prometheus metrics from multiple endpoints.
@@ -54,6 +64,7 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 	if strings.TrimSpace(endpointsConfig) == "" {
 		return nil, fmt.Errorf("%s not defined", metricsEnvVariableName)
 	}
+	securityMode := currentSecurityMode()
 
 	var parsed []Endpoint
 
@@ -67,7 +78,7 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 		// 2) fallback: comma-separated URLs
 		log.Warn().
 			Err(err).
-			Str("env", endpointsConfig).
+			Int("input_length", len(endpointsConfig)).
 			Msg("failed JSON parse, trying comma-separated list")
 
 		for i, url := range strings.Split(endpointsConfig, ",") {
@@ -82,25 +93,40 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 	}
 
 	// Validate all endpoint names (C2: reject chars that break label values)
-	for _, ep := range parsed {
+	for i, ep := range parsed {
 		if !validName.MatchString(ep.Name) {
 			return nil, fmt.Errorf("invalid endpoint name %q: must match [a-zA-Z0-9_-]+", ep.Name)
 		}
+		validatedURL, err := validateEndpointURL(ep.URL, securityMode)
+		if err != nil {
+			return nil, fmt.Errorf("invalid endpoint URL for %q: %w", ep.Name, err)
+		}
+		parsed[i].URL = validatedURL
 	}
 
 	if len(parsed) == 0 {
 		return nil, fmt.Errorf("no valid endpoints found in %s", metricsEnvVariableName)
 	}
 
+	client := &http.Client{Timeout: 5 * time.Second}
+	if securityMode != securityModeLegacy {
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
+
 	agg := &Aggregator{
 		endpoints: parsed,
-		client:    &http.Client{Timeout: 5 * time.Second},
+		client:    client,
 		logger:    log.Logger,
 	}
 
 	agg.logger.Info().Msg("aggregating metrics from configured endpoints")
 	for _, ep := range agg.endpoints {
-		agg.logger.Info().Str("name", ep.Name).Str("url", ep.URL).Msg("endpoint registered")
+		agg.logger.Info().
+			Str("name", ep.Name).
+			Str("url", sanitizeURLForLog(ep.URL)).
+			Msg("endpoint registered")
 	}
 	return agg, nil
 }
@@ -137,15 +163,23 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 		go func(idx int, ep Endpoint) {
 			defer wg.Done()
 			start := time.Now()
+			sanitizedURL := sanitizeURLForLog(ep.URL)
 
-			resp, err := a.client.Get(ep.URL)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.URL, nil)
 			if err != nil {
-				logger.Error().Err(err).Str("url", ep.URL).Msg("HTTP GET failed")
+				logger.Error().Err(err).Str("url", sanitizedURL).Msg("request creation failed")
+				results[idx] = scrapeResult{duration: time.Since(start)}
+				return
+			}
+
+			resp, err := a.client.Do(req)
+			if err != nil {
+				logger.Error().Err(err).Str("url", sanitizedURL).Msg("HTTP GET failed")
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
 			if resp.StatusCode != http.StatusOK {
-				logger.Warn().Int("status_code", resp.StatusCode).Str("url", ep.URL).Msg("non-200 response")
+				logger.Warn().Int("status_code", resp.StatusCode).Str("url", sanitizedURL).Msg("non-200 response")
 				resp.Body.Close()
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
@@ -154,23 +188,37 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 			body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 			resp.Body.Close()
 			if err != nil {
-				logger.Error().Err(err).Str("url", ep.URL).Msg("read body failed")
+				logger.Error().Err(err).Str("url", sanitizedURL).Msg("read body failed")
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
 
 			// C1: strip comment/metadata lines; only keep metric data lines
 			var lines []string
+			invalidSamples := 0
 			for _, line := range strings.Split(string(body), "\n") {
 				if line == "" || strings.HasPrefix(line, "#") {
 					continue
 				}
-				lines = append(lines, addCustomLabel(line, ep.Name))
+				labeled := addCustomLabel(line, ep.Name)
+				if !isValidPrometheusSampleLine(labeled) {
+					invalidSamples++
+					continue
+				}
+				lines = append(lines, labeled)
+			}
+			if invalidSamples > 0 {
+				logger.Warn().
+					Str("endpoint", ep.Name).
+					Str("url", sanitizedURL).
+					Int("dropped_samples", invalidSamples).
+					Msg("dropped invalid scrape samples")
 			}
 			results[idx] = scrapeResult{
-				lines:    lines,
-				success:  true,
-				duration: time.Since(start),
+				lines:          lines,
+				success:        len(lines) > 0,
+				duration:       time.Since(start),
+				invalidSamples: invalidSamples,
 			}
 		}(i, ep)
 	}
@@ -195,6 +243,13 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 	)
 	for i, ep := range a.endpoints {
 		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_duration_seconds{endpoint=%q} %.3f", ep.Name, results[i].duration.Seconds()))
+	}
+	merged = append(merged,
+		"# HELP metrics_aggregator_scrape_invalid_samples_total Number of invalid scrape samples dropped from the last scrape.",
+		"# TYPE metrics_aggregator_scrape_invalid_samples_total gauge",
+	)
+	for i, ep := range a.endpoints {
+		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_invalid_samples_total{endpoint=%q} %d", ep.Name, results[i].invalidSamples))
 	}
 	merged = append(merged,
 		"# HELP metrics_aggregator_requests_total Total number of /metrics requests served.",
@@ -245,4 +300,63 @@ func addCustomLabel(metric, name string) string {
 		lbls = fmt.Sprintf("%s{origin_container=%q}", lbls, name)
 	}
 	return fmt.Sprintf("%s %s", lbls, val)
+}
+
+func currentSecurityMode() string {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv(securityModeEnvVariableName)))
+	switch mode {
+	case "", securityModeStrict:
+		return securityModeStrict
+	case securityModeLegacy:
+		return securityModeLegacy
+	default:
+		return securityModeStrict
+	}
+}
+
+func validateEndpointURL(rawURL, securityMode string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL format")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("missing host")
+	}
+	if securityMode == securityModeLegacy {
+		return parsed.String(), nil
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("userinfo is not allowed")
+	}
+	if parsed.RawQuery != "" {
+		return "", fmt.Errorf("query parameters are not allowed")
+	}
+	if parsed.Fragment != "" {
+		return "", fmt.Errorf("fragments are not allowed")
+	}
+	path := parsed.EscapedPath()
+	if path != "" && path != "/" && path != defaultMetricsPath {
+		return "", fmt.Errorf("path must be %q", defaultMetricsPath)
+	}
+	if path == "" || path == "/" {
+		parsed.Path = defaultMetricsPath
+	}
+	return parsed.String(), nil
+}
+
+func sanitizeURLForLog(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.Redacted()
+}
+
+func isValidPrometheusSampleLine(line string) bool {
+	return sampleLine.MatchString(line)
 }

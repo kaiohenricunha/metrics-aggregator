@@ -17,7 +17,7 @@ import (
 // TestNewAggregator tests the Aggregator constructor with various inputs.
 func TestNewAggregator(t *testing.T) {
 	t.Run("valid JSON map", func(t *testing.T) {
-		agg, err := NewAggregator(`{"svc1":"http://a/m","svc2":"http://b/m"}`)
+		agg, err := NewAggregator(`{"svc1":"http://a/metrics","svc2":"http://b/metrics"}`)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -35,7 +35,7 @@ func TestNewAggregator(t *testing.T) {
 	})
 
 	t.Run("valid CSV", func(t *testing.T) {
-		agg, err := NewAggregator("http://a/m,http://b/m")
+		agg, err := NewAggregator("http://a/metrics,http://b/metrics")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -49,7 +49,7 @@ func TestNewAggregator(t *testing.T) {
 	})
 
 	t.Run("invalid names rejected", func(t *testing.T) {
-		_, err := NewAggregator(`{"svc bad":"http://a/m"}`)
+		_, err := NewAggregator(`{"svc bad":"http://a/metrics"}`)
 		if err == nil {
 			t.Fatal("expected error for invalid name")
 		}
@@ -63,21 +63,21 @@ func TestNewAggregator(t *testing.T) {
 	})
 
 	t.Run("name with quotes rejected", func(t *testing.T) {
-		_, err := NewAggregator(`{"svc\"bad":"http://a/m"}`)
+		_, err := NewAggregator(`{"svc\"bad":"http://a/metrics"}`)
 		if err == nil {
 			t.Fatal("expected error for invalid name")
 		}
 	})
 
 	t.Run("name with newline rejected", func(t *testing.T) {
-		_, err := NewAggregator("{\"svc\\nbad\":\"http://a/m\"}")
+		_, err := NewAggregator("{\"svc\\nbad\":\"http://a/metrics\"}")
 		if err == nil {
 			t.Fatal("expected error for invalid name")
 		}
 	})
 
 	t.Run("valid hyphens underscores digits", func(t *testing.T) {
-		_, err := NewAggregator(`{"svc-1_test":"http://a/m"}`)
+		_, err := NewAggregator(`{"svc-1_test":"http://a/metrics"}`)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -91,7 +91,7 @@ func TestNewAggregator(t *testing.T) {
 	})
 
 	t.Run("URLs with spaces and empty entries", func(t *testing.T) {
-		agg, err := NewAggregator("http://a:9090/m, ,http://b:9090/m")
+		agg, err := NewAggregator("http://a:9090/metrics, ,http://b:9090/metrics")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -105,7 +105,7 @@ func TestNewAggregator(t *testing.T) {
 	})
 
 	t.Run("single URL", func(t *testing.T) {
-		agg, err := NewAggregator("http://a:9090/m")
+		agg, err := NewAggregator("http://a:9090/metrics")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -508,5 +508,100 @@ func TestAggregator_ContextLogger(t *testing.T) {
 	}
 	if !strings.Contains(output, "HTTP GET failed") {
 		t.Fatalf("expected 'HTTP GET failed' in log output, got: %s", output)
+	}
+}
+
+func TestNewAggregator_SecurityValidation_StrictByDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+	}{
+		{
+			name:   "reject URL userinfo",
+			config: `{"svc":"http://user:pass@localhost:9090/metrics"}`,
+		},
+		{
+			name:   "reject non metrics path",
+			config: `{"svc":"http://localhost:9090/secret"}`,
+		},
+		{
+			name:   "reject unsupported scheme",
+			config: `{"svc":"file:///etc/passwd"}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("METRICS_SECURITY_MODE", "")
+			_, err := NewAggregator(tc.config)
+			if err == nil {
+				t.Fatalf("expected security validation error for %s", tc.config)
+			}
+		})
+	}
+}
+
+func TestNewAggregator_SecurityValidation_LegacyMode(t *testing.T) {
+	t.Setenv("METRICS_SECURITY_MODE", "legacy")
+	_, err := NewAggregator(`{"svc":"http://user:pass@localhost:9090/secret"}`)
+	if err != nil {
+		t.Fatalf("legacy mode should keep previous parsing behavior, got: %v", err)
+	}
+}
+
+func TestNewAggregator_DoesNotLogSensitiveEndpointValues(t *testing.T) {
+	secret := "user:Pa55w0rd"
+	cfg := `{"svc":"http://` + secret + `@127.0.0.1:9090/metrics",`
+
+	previousLogger := log.Logger
+	defer func() { log.Logger = previousLogger }()
+
+	var buf bytes.Buffer
+	log.Logger = zerolog.New(&buf).With().Timestamp().Logger()
+
+	_, _ = NewAggregator(cfg)
+
+	output := buf.String()
+	if strings.Contains(output, secret) {
+		t.Fatalf("log output leaked endpoint credentials: %s", output)
+	}
+	if strings.Contains(output, `"env"`) {
+		t.Fatalf("log output should not include raw env/config payload: %s", output)
+	}
+}
+
+func TestAggregator_BlocksRedirectToSensitivePath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metrics":
+			http.Redirect(w, r, "/secret", http.StatusFound)
+		case "/secret":
+			_, _ = w.Write([]byte("aws_secret_access_key SUPERSECRET123\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	agg := newTestAggregator([]Endpoint{{Name: "redir", URL: srv.URL + "/metrics"}})
+	metrics, err := agg.AggregateMetrics(context.Background())
+	if err == nil {
+		t.Fatalf("expected redirected scrape to be blocked, got output:\n%s", metrics)
+	}
+	if strings.Contains(metrics, "SUPERSECRET123") {
+		t.Fatalf("redirected secret must not appear in output: %s", metrics)
+	}
+}
+
+func TestAggregator_RejectsInvalidSampleValues(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("http_requests_total oops\n"))
+	}))
+	defer srv.Close()
+
+	agg := newTestAggregator([]Endpoint{{Name: "bad", URL: srv.URL}})
+	_, err := agg.AggregateMetrics(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid sample payload to be rejected")
 	}
 }
