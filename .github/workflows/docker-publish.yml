@@ -35,7 +35,7 @@ jobs:
           echo "version=$(grep '^go ' go.mod | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.5.0
+        uses: sigstore/cosign-installer@v4.1.0
         with:
           cosign-release: 'v2.2.4'
 
