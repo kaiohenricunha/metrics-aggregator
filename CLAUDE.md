@@ -67,7 +67,6 @@ docker compose down -v
 | `/test-one <TestName>` | `make test-one TEST='^<TestName>$'` — run one test by exact name |
 | `make e2e` | K8s E2E tests via kind, includes Istio (~8-10 min) — creates cluster, runs all phases, tears down |
 | `make e2e-up` | Create kind cluster + build/load image only (no tests) — use for manifest validation |
-| `make e2e-istio` | (deprecated) alias for `make e2e` — Istio is now always included |
 | `make e2e-keep` | K8s E2E, keep cluster for debugging |
 | `make e2e-clean` | Delete the E2E kind cluster |
 

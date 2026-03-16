@@ -21,7 +21,7 @@ func TestNewAggregator(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		eps := agg.Endpoints()
+		eps := agg.getEndpoints()
 		if len(eps) != 2 {
 			t.Fatalf("expected 2 endpoints, got %d", len(eps))
 		}
@@ -39,7 +39,7 @@ func TestNewAggregator(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		eps := agg.Endpoints()
+		eps := agg.getEndpoints()
 		if len(eps) != 2 {
 			t.Fatalf("expected 2 endpoints, got %d", len(eps))
 		}
@@ -95,7 +95,7 @@ func TestNewAggregator(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		eps := agg.Endpoints()
+		eps := agg.getEndpoints()
 		if len(eps) != 2 {
 			t.Fatalf("expected 2 endpoints, got %d", len(eps))
 		}
@@ -109,7 +109,7 @@ func TestNewAggregator(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		eps := agg.Endpoints()
+		eps := agg.getEndpoints()
 		if len(eps) != 1 {
 			t.Fatalf("expected 1 endpoint, got %d", len(eps))
 		}
