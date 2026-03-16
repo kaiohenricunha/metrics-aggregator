@@ -12,6 +12,7 @@ spec:
     metadata:
       labels:
         app: observer-prometheus-istio
+      annotations:
         sidecar.istio.io/inject: "true"
     spec:
       containers:

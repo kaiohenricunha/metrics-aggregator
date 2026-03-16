@@ -15,8 +15,8 @@ spec:
     metadata:
       labels:
         app: observer-sd-prometheus
-        sidecar.istio.io/inject: "true"
       annotations:
+        sidecar.istio.io/inject: "true"
         prometheus.io/scrape: "false"
     spec:
       serviceAccountName: prometheus-sd
