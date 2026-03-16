@@ -21,9 +21,9 @@ func TestInitTracing_Disabled(t *testing.T) {
 	tracer := tp.Tracer("test")
 	_, span := tracer.Start(context.Background(), "test-span")
 	span.End()
-	// No-op span should not record
+	// No-op provider produces spans with invalid SpanContext
 	if span.SpanContext().IsValid() {
-		// When disabled, global TP is the default no-op, so SpanContext is invalid
+		t.Fatal("expected no-op span with invalid SpanContext when tracing is disabled")
 	}
 }
 
