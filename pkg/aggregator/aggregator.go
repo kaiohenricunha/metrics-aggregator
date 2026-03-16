@@ -37,6 +37,15 @@ var (
 	originLabelKey = regexp.MustCompile(`[{,]\s*origin_container\s*=`)
 )
 
+type contextKey int
+
+const (
+	// ContextKeyRequestID carries the X-Request-Id value for forwarding to scrape targets.
+	ContextKeyRequestID contextKey = iota
+	// ContextKeyTraceparent carries the traceparent header value for forwarding.
+	ContextKeyTraceparent
+)
+
 // Endpoint represents a Prometheus /metrics endpoint.
 type Endpoint struct {
 	Name string
@@ -188,6 +197,12 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 				logger.Error().Err(err).Str("url", sanitizedURL).Msg("request creation failed")
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
+			}
+			if rid, ok := ctx.Value(ContextKeyRequestID).(string); ok && rid != "" {
+				req.Header.Set("X-Request-Id", rid)
+			}
+			if tp, ok := ctx.Value(ContextKeyTraceparent).(string); ok && tp != "" {
+				req.Header.Set("traceparent", tp)
 			}
 
 			resp, err := a.client.Do(req)

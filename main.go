@@ -100,6 +100,7 @@ func generateRequestID() string {
 }
 
 // requestIDMiddleware injects a request ID into the response and logger context.
+// It also parses the W3C traceparent header for log correlation and downstream forwarding.
 func requestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-Id")
@@ -110,8 +111,44 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 
 		logger := log.With().Str("request_id", id).Logger()
 		ctx := logger.WithContext(r.Context())
+		ctx = context.WithValue(ctx, aggregator.ContextKeyRequestID, id)
+
+		// Parse W3C traceparent header: "00-<trace_id>-<span_id>-<flags>"
+		if tp := r.Header.Get("traceparent"); tp != "" {
+			if traceID, spanID, ok := parseTraceparent(tp); ok {
+				logger = logger.With().Str("trace_id", traceID).Str("span_id", spanID).Logger()
+				ctx = logger.WithContext(ctx)
+			}
+			ctx = context.WithValue(ctx, aggregator.ContextKeyTraceparent, tp)
+		}
+
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// parseTraceparent extracts trace_id and span_id from a W3C traceparent header.
+// Format: "version-trace_id-span_id-flags" (e.g. "00-<32hex>-<16hex>-01")
+func parseTraceparent(tp string) (traceID, spanID string, ok bool) {
+	parts := strings.Split(tp, "-")
+	if len(parts) != 4 {
+		return "", "", false
+	}
+	traceID = parts[1]
+	spanID = parts[2]
+	if len(traceID) != 32 || len(spanID) != 16 {
+		return "", "", false
+	}
+	for _, c := range traceID {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", "", false
+		}
+	}
+	for _, c := range spanID {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", "", false
+		}
+	}
+	return traceID, spanID, true
 }
 
 func (c *metricsCache) getOrFetch(ctx context.Context, fetch func(context.Context) (string, error)) (string, error) {

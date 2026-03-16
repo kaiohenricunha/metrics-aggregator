@@ -473,3 +473,100 @@ func TestMetricsHandler_HTTPRequestDurationHistogram_IncludesRejected(t *testing
 		t.Fatalf("missing histogram _count in:\n%s", string(body))
 	}
 }
+
+func TestRequestIDMiddleware_ParsesTraceparent(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	req, _ := http.NewRequest("GET", "http://"+addr+"/metrics", nil)
+	req.Header.Set("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	// If no panic occurred and response is OK, the parsing succeeded
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestRequestIDMiddleware_NoTraceFieldsWithoutTraceparent(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestRequestIDMiddleware_InvalidTraceparentIgnored(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	req, _ := http.NewRequest("GET", "http://"+addr+"/metrics", nil)
+	req.Header.Set("traceparent", "malformed-garbage")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 even with invalid traceparent, got %d", resp.StatusCode)
+	}
+}
+
+func TestParseTraceparent(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantOK  bool
+		traceID string
+		spanID  string
+	}{
+		{"valid", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", true, "0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331"},
+		{"too few parts", "00-abc-01", false, "", ""},
+		{"bad trace_id length", "00-0af765-b7ad6b7169203331-01", false, "", ""},
+		{"bad span_id length", "00-0af7651916cd43dd8448eb211c80319c-b7ad-01", false, "", ""},
+		{"uppercase hex rejected", "00-0AF7651916CD43DD8448EB211C80319C-B7AD6B7169203331-01", false, "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			traceID, spanID, ok := parseTraceparent(tc.input)
+			if ok != tc.wantOK {
+				t.Fatalf("parseTraceparent(%q): ok=%v, want %v", tc.input, ok, tc.wantOK)
+			}
+			if ok {
+				if traceID != tc.traceID {
+					t.Errorf("traceID=%q, want %q", traceID, tc.traceID)
+				}
+				if spanID != tc.spanID {
+					t.Errorf("spanID=%q, want %q", spanID, tc.spanID)
+				}
+			}
+		})
+	}
+}

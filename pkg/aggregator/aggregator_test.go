@@ -790,3 +790,58 @@ func TestAggregator_ScrapeDurationHistogram_Accumulates(t *testing.T) {
 		t.Fatalf("expected _count=4 after 4 calls, got:\n%s", res)
 	}
 }
+
+func TestAggregator_ForwardsRequestIDHeader(t *testing.T) {
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Request-Id")
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv.Close()
+
+	agg := newTestAggregator([]Endpoint{{Name: "svc", URL: srv.URL}})
+	ctx := context.WithValue(context.Background(), ContextKeyRequestID, "test-req-123")
+	agg.AggregateMetrics(ctx)
+
+	if gotHeader != "test-req-123" {
+		t.Fatalf("expected X-Request-Id 'test-req-123', got %q", gotHeader)
+	}
+}
+
+func TestAggregator_ForwardsTraceparentHeader(t *testing.T) {
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("traceparent")
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv.Close()
+
+	tp := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	agg := newTestAggregator([]Endpoint{{Name: "svc", URL: srv.URL}})
+	ctx := context.WithValue(context.Background(), ContextKeyTraceparent, tp)
+	agg.AggregateMetrics(ctx)
+
+	if gotHeader != tp {
+		t.Fatalf("expected traceparent %q, got %q", tp, gotHeader)
+	}
+}
+
+func TestAggregator_NoHeadersWhenContextEmpty(t *testing.T) {
+	var gotRequestID, gotTraceparent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestID = r.Header.Get("X-Request-Id")
+		gotTraceparent = r.Header.Get("traceparent")
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv.Close()
+
+	agg := newTestAggregator([]Endpoint{{Name: "svc", URL: srv.URL}})
+	agg.AggregateMetrics(context.Background())
+
+	if gotRequestID != "" {
+		t.Fatalf("expected no X-Request-Id header, got %q", gotRequestID)
+	}
+	if gotTraceparent != "" {
+		t.Fatalf("expected no traceparent header, got %q", gotTraceparent)
+	}
+}
