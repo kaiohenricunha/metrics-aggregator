@@ -127,8 +127,8 @@ else
   # only self-instrumentation metadata should be emitted
   assert_grep '^# TYPE metrics_aggregator_scrape_success gauge$' \
     "$EVIDENCE_DIR/metrics-raw.txt" "self TYPE: scrape_success gauge"
-  assert_grep '^# TYPE metrics_aggregator_scrape_duration_seconds gauge$' \
-    "$EVIDENCE_DIR/metrics-raw.txt" "self TYPE: scrape_duration_seconds gauge"
+  assert_grep '^# TYPE metrics_aggregator_scrape_duration_seconds histogram$' \
+    "$EVIDENCE_DIR/metrics-raw.txt" "self TYPE: scrape_duration_seconds histogram"
   assert_grep '^# TYPE metrics_aggregator_scrape_invalid_samples gauge$' \
     "$EVIDENCE_DIR/metrics-raw.txt" "self TYPE: scrape_invalid_samples gauge"
   assert_grep '^# TYPE metrics_aggregator_requests_total counter$' \
@@ -143,12 +143,14 @@ else
     "$EVIDENCE_DIR/metrics-raw.txt" "scrape_success=1 for app-a"
   assert_grep 'metrics_aggregator_scrape_success{endpoint="app-b"} 1' \
     "$EVIDENCE_DIR/metrics-raw.txt" "scrape_success=1 for app-b"
-  assert_grep 'metrics_aggregator_scrape_duration_seconds{endpoint="app-a"}' \
-    "$EVIDENCE_DIR/metrics-raw.txt" "scrape_duration_seconds for app-a"
+  assert_grep 'metrics_aggregator_scrape_duration_seconds_count{endpoint="app-a"}' \
+    "$EVIDENCE_DIR/metrics-raw.txt" "scrape_duration_seconds_count for app-a"
   assert_grep 'metrics_aggregator_requests_total' \
     "$EVIDENCE_DIR/metrics-raw.txt" "requests_total present"
-  assert_grep 'metrics_aggregator_scrape_duration_seconds{endpoint="app-b"}' \
-    "$EVIDENCE_DIR/metrics-raw.txt" "scrape_duration_seconds for app-b"
+  assert_grep 'metrics_aggregator_scrape_duration_seconds_count{endpoint="app-b"}' \
+    "$EVIDENCE_DIR/metrics-raw.txt" "scrape_duration_seconds_count for app-b"
+  assert_grep 'metrics_aggregator_scrape_errors_total' \
+    "$EVIDENCE_DIR/metrics-raw.txt" "scrape_errors_total present"
 
   # Content-specific assertions — app-a (Go API: counter, histogram, gauge)
   assert_grep 'http_requests_total{origin_container="app-a"' "$EVIDENCE_DIR/metrics-raw.txt" \
@@ -209,14 +211,14 @@ done
 echo "max_latency: ${MAX_LATENCY}s" >> "$EVIDENCE_DIR/latency-samples.txt"
 assert_lt "$MAX_LATENCY" "10" "max latency < 10s (Prometheus scrape_timeout)"
 
-# Extract scrape durations
+# Extract scrape durations (from histogram _sum lines)
 {
   echo "=== Scrape Duration Analysis ==="
   grep 'metrics_aggregator_scrape_duration_seconds' "$EVIDENCE_DIR/metrics-raw.txt" || true
 } > "$EVIDENCE_DIR/performance-summary.txt"
 
-DUR1=$(grep 'scrape_duration_seconds{endpoint="app-a"}' "$EVIDENCE_DIR/metrics-raw.txt" | awk '{print $2}' || echo "0")
-DUR2=$(grep 'scrape_duration_seconds{endpoint="app-b"}' "$EVIDENCE_DIR/metrics-raw.txt" | awk '{print $2}' || echo "0")
+DUR1=$(grep 'scrape_duration_seconds_sum{endpoint="app-a"}' "$EVIDENCE_DIR/metrics-raw.txt" | awk '{print $2}' || echo "0")
+DUR2=$(grep 'scrape_duration_seconds_sum{endpoint="app-b"}' "$EVIDENCE_DIR/metrics-raw.txt" | awk '{print $2}' || echo "0")
 echo "app-a_duration: ${DUR1}s" >> "$EVIDENCE_DIR/performance-summary.txt"
 echo "app-b_duration: ${DUR2}s" >> "$EVIDENCE_DIR/performance-summary.txt"
 echo "max_curl_latency: ${MAX_LATENCY}s" >> "$EVIDENCE_DIR/performance-summary.txt"

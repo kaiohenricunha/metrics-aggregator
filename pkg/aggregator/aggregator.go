@@ -52,11 +52,13 @@ type scrapeResult struct {
 
 // Aggregator scrapes and merges Prometheus metrics from multiple endpoints.
 type Aggregator struct {
-	endpoints     []Endpoint
-	client        *http.Client
-	logger        zerolog.Logger
-	requestsTotal atomic.Int64
-	errorsTotal   atomic.Int64
+	endpoints          []Endpoint
+	client             *http.Client
+	logger             zerolog.Logger
+	requestsTotal      atomic.Int64
+	errorsTotal        atomic.Int64
+	scrapeErrors       []atomic.Int64
+	scrapeDurationHist map[string]*Histogram
 }
 
 // NewAggregator parses endpointsConfig (JSON map or comma-separated URLs)
@@ -116,10 +118,17 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 		}
 	}
 
+	scrapeDurationHist := make(map[string]*Histogram, len(parsed))
+	for _, ep := range parsed {
+		scrapeDurationHist[ep.Name] = NewHistogram(DefaultBuckets())
+	}
+
 	agg := &Aggregator{
-		endpoints: parsed,
-		client:    client,
-		logger:    log.Logger,
+		endpoints:          parsed,
+		client:             client,
+		logger:             log.Logger,
+		scrapeErrors:       make([]atomic.Int64, len(parsed)),
+		scrapeDurationHist: scrapeDurationHist,
 	}
 
 	agg.logger.Info().Msg("aggregating metrics from configured endpoints")
@@ -165,6 +174,14 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 			defer wg.Done()
 			start := time.Now()
 			sanitizedURL := sanitizeURLForLog(ep.URL)
+			failed := true
+			defer func() {
+				dur := time.Since(start)
+				a.scrapeDurationHist[ep.Name].Observe(dur.Seconds())
+				if failed {
+					a.scrapeErrors[idx].Add(1)
+				}
+			}()
 
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.URL, nil)
 			if err != nil {
@@ -224,6 +241,7 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 					Int("dropped_samples", invalidSamples).
 					Msg("dropped invalid scrape samples")
 			}
+			failed = len(lines) == 0
 			results[idx] = scrapeResult{
 				lines:          lines,
 				success:        len(lines) > 0,
@@ -254,12 +272,16 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 		}
 		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_success{endpoint=%q} %d", ep.Name, val))
 	}
+	merged = append(merged, RenderHeader("metrics_aggregator_scrape_duration_seconds", "Duration of endpoint scrapes in seconds."))
+	for _, ep := range a.endpoints {
+		merged = append(merged, RenderSamples("metrics_aggregator_scrape_duration_seconds", fmt.Sprintf("endpoint=%q", ep.Name), a.scrapeDurationHist[ep.Name]))
+	}
 	merged = append(merged,
-		"# HELP metrics_aggregator_scrape_duration_seconds Duration of the last scrape in seconds.",
-		"# TYPE metrics_aggregator_scrape_duration_seconds gauge",
+		"# HELP metrics_aggregator_scrape_errors_total Total number of failed scrapes per endpoint.",
+		"# TYPE metrics_aggregator_scrape_errors_total counter",
 	)
 	for i, ep := range a.endpoints {
-		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_duration_seconds{endpoint=%q} %.3f", ep.Name, results[i].duration.Seconds()))
+		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_errors_total{endpoint=%q} %d", ep.Name, a.scrapeErrors[i].Load()))
 	}
 	merged = append(merged,
 		"# HELP metrics_aggregator_scrape_invalid_samples Number of invalid scrape samples dropped from the last scrape.",

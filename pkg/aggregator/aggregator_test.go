@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -121,10 +122,16 @@ func TestNewAggregator(t *testing.T) {
 
 // newTestAggregator creates an Aggregator from endpoints directly (for tests).
 func newTestAggregator(eps []Endpoint) *Aggregator {
+	scrapeDurationHist := make(map[string]*Histogram, len(eps))
+	for _, ep := range eps {
+		scrapeDurationHist[ep.Name] = NewHistogram(DefaultBuckets())
+	}
 	return &Aggregator{
-		endpoints: eps,
-		client:    &http.Client{},
-		logger:    log.Logger,
+		endpoints:          eps,
+		client:             &http.Client{},
+		logger:             log.Logger,
+		scrapeErrors:       make([]atomic.Int64, len(eps)),
+		scrapeDurationHist: scrapeDurationHist,
 	}
 }
 
@@ -424,8 +431,12 @@ func TestAggregator_SelfInstrumentation(t *testing.T) {
 	checks := []string{
 		"# TYPE metrics_aggregator_scrape_success gauge",
 		`metrics_aggregator_scrape_success{endpoint="mysvc"} 1`,
-		"# TYPE metrics_aggregator_scrape_duration_seconds gauge",
-		`metrics_aggregator_scrape_duration_seconds{endpoint="mysvc"}`,
+		"# TYPE metrics_aggregator_scrape_duration_seconds histogram",
+		`metrics_aggregator_scrape_duration_seconds_count{endpoint="mysvc"}`,
+		`metrics_aggregator_scrape_duration_seconds_sum{endpoint="mysvc"}`,
+		`metrics_aggregator_scrape_duration_seconds_bucket{endpoint="mysvc",le="+Inf"}`,
+		"# TYPE metrics_aggregator_scrape_errors_total counter",
+		`metrics_aggregator_scrape_errors_total{endpoint="mysvc"} 0`,
 		"# TYPE metrics_aggregator_scrape_invalid_samples gauge",
 		`metrics_aggregator_scrape_invalid_samples{endpoint="mysvc"} 0`,
 		"# TYPE metrics_aggregator_requests_total counter",
@@ -486,6 +497,8 @@ func TestAggregator_ErrorCounter(t *testing.T) {
 	}))
 	defer srv.Close()
 	agg.endpoints = []Endpoint{{Name: "ok", URL: srv.URL}}
+	agg.scrapeErrors = make([]atomic.Int64, 1)
+	agg.scrapeDurationHist = map[string]*Histogram{"ok": NewHistogram(DefaultBuckets())}
 
 	res, err := agg.AggregateMetrics(context.Background())
 	if err != nil {
@@ -678,5 +691,102 @@ func TestAggregator_OversizedResponseIsRejectedWithoutPartialIngestion(t *testin
 	}
 	if !strings.Contains(res, `up{origin_container="good"} 1`) {
 		t.Fatalf("expected healthy endpoint metrics to remain, got:\n%s", res)
+	}
+}
+
+func TestAggregator_PerEndpointScrapeErrors(t *testing.T) {
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer good.Close()
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer bad.Close()
+
+	agg := newTestAggregator([]Endpoint{
+		{Name: "healthy", URL: good.URL},
+		{Name: "broken", URL: bad.URL},
+	})
+	res, err := agg.AggregateMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("expected partial success, got error: %v", err)
+	}
+
+	if !strings.Contains(res, "# TYPE metrics_aggregator_scrape_errors_total counter") {
+		t.Fatalf("missing scrape_errors_total TYPE line in:\n%s", res)
+	}
+	if !strings.Contains(res, `metrics_aggregator_scrape_errors_total{endpoint="broken"} 1`) {
+		t.Fatalf("expected scrape_errors_total for broken=1 in:\n%s", res)
+	}
+	if !strings.Contains(res, `metrics_aggregator_scrape_errors_total{endpoint="healthy"} 0`) {
+		t.Fatalf("expected scrape_errors_total for healthy=0 in:\n%s", res)
+	}
+}
+
+func TestAggregator_PerEndpointScrapeErrors_Accumulate(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer bad.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer good.Close()
+
+	agg := newTestAggregator([]Endpoint{
+		{Name: "ok", URL: good.URL},
+		{Name: "fail", URL: bad.URL},
+	})
+
+	agg.AggregateMetrics(context.Background())
+	res, _ := agg.AggregateMetrics(context.Background())
+
+	if !strings.Contains(res, `metrics_aggregator_scrape_errors_total{endpoint="fail"} 2`) {
+		t.Fatalf("expected scrape_errors_total for fail=2 after 2 calls, got:\n%s", res)
+	}
+}
+
+func TestAggregator_ScrapeDurationHistogram(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv.Close()
+
+	agg := newTestAggregator([]Endpoint{{Name: "svc", URL: srv.URL}})
+	res, err := agg.AggregateMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(res, "# TYPE metrics_aggregator_scrape_duration_seconds histogram") {
+		t.Fatalf("expected histogram TYPE for scrape_duration, got:\n%s", res)
+	}
+	if !strings.Contains(res, `metrics_aggregator_scrape_duration_seconds_bucket{endpoint="svc",le="+Inf"}`) {
+		t.Fatalf("expected +Inf bucket, got:\n%s", res)
+	}
+	if !strings.Contains(res, `metrics_aggregator_scrape_duration_seconds_sum{endpoint="svc"}`) {
+		t.Fatalf("expected _sum, got:\n%s", res)
+	}
+	if !strings.Contains(res, `metrics_aggregator_scrape_duration_seconds_count{endpoint="svc"} 1`) {
+		t.Fatalf("expected _count=1, got:\n%s", res)
+	}
+}
+
+func TestAggregator_ScrapeDurationHistogram_Accumulates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv.Close()
+
+	agg := newTestAggregator([]Endpoint{{Name: "svc", URL: srv.URL}})
+	for range 3 {
+		agg.AggregateMetrics(context.Background())
+	}
+	res, _ := agg.AggregateMetrics(context.Background())
+
+	// 4 calls total (3 + the one that produces res), but histogram accumulates across all calls
+	if !strings.Contains(res, `metrics_aggregator_scrape_duration_seconds_count{endpoint="svc"} 4`) {
+		t.Fatalf("expected _count=4 after 4 calls, got:\n%s", res)
 	}
 }
