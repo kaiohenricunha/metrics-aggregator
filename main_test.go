@@ -385,3 +385,91 @@ func TestStatusRecorder_TracksBytesOnErrorResponses(t *testing.T) {
 		t.Fatal("expected statusRecorder to track bytes written by http.Error")
 	}
 }
+
+func TestMetricsHandler_HTTPRequestDurationHistogram(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "0s")
+	t.Setenv("METRICS_MAX_INFLIGHT", "32")
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	for range 3 {
+		resp, err := http.Get("http://" + addr + "/metrics")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	output := string(body)
+
+	if !strings.Contains(output, "# TYPE metrics_aggregator_http_request_duration_seconds histogram") {
+		t.Fatalf("missing histogram TYPE line in:\n%s", output)
+	}
+	if !strings.Contains(output, `metrics_aggregator_http_request_duration_seconds_bucket{le="+Inf"}`) {
+		t.Fatalf("missing +Inf bucket in:\n%s", output)
+	}
+	if !strings.Contains(output, "metrics_aggregator_http_request_duration_seconds_sum") {
+		t.Fatalf("missing _sum in:\n%s", output)
+	}
+	if !strings.Contains(output, "metrics_aggregator_http_request_duration_seconds_count") {
+		t.Fatalf("missing _count in:\n%s", output)
+	}
+}
+
+func TestMetricsHandler_HTTPRequestDurationHistogram_IncludesRejected(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "0s")
+	t.Setenv("METRICS_MAX_INFLIGHT", "1")
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	// First request holds the inflight slot
+	go func() {
+		http.Get("http://" + addr + "/metrics")
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	// Second request should be rejected (503)
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", resp.StatusCode)
+	}
+
+	// Wait for first request to complete, then fetch metrics to check histogram
+	time.Sleep(400 * time.Millisecond)
+	resp, err = http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	// The histogram should have counted both requests (success + rejected)
+	if !strings.Contains(string(body), "metrics_aggregator_http_request_duration_seconds_count") {
+		t.Fatalf("missing histogram _count in:\n%s", string(body))
+	}
+}

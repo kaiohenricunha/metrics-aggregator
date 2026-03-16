@@ -160,10 +160,12 @@ func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.H
 	cache := &metricsCache{ttl: cfg.cacheTTL}
 	inflightLimiter := make(chan struct{}, cfg.maxInflight)
 	var httpRequests atomic.Int64
+	httpDurationHist := aggregator.NewHistogram(aggregator.DefaultBuckets())
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		httpRequests.Add(1)
 		start := time.Now()
+		defer func() { httpDurationHist.Observe(time.Since(start).Seconds()) }()
 		logger := zerolog.Ctx(r.Context())
 
 		w.Header().Set("Content-Type", "text/plain")
@@ -200,13 +202,15 @@ func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.H
 			return
 		}
 
-		// Append HTTP-level request counter (increments on every request, including cache hits)
+		// Append HTTP-level metrics (increment on every request, including cache hits)
 		metrics += fmt.Sprintf(
 			"# HELP metrics_aggregator_http_requests_total Total number of HTTP requests to the /metrics endpoint.\n"+
 				"# TYPE metrics_aggregator_http_requests_total counter\n"+
 				"metrics_aggregator_http_requests_total %d\n",
 			httpRequests.Load(),
 		)
+		metrics += aggregator.RenderHeader("metrics_aggregator_http_request_duration_seconds", "Duration of HTTP requests to the /metrics endpoint in seconds.") + "\n"
+		metrics += aggregator.RenderSamples("metrics_aggregator_http_request_duration_seconds", "", httpDurationHist) + "\n"
 
 		_, _ = fmt.Fprint(rec, metrics)
 		logger.Info().
