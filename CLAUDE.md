@@ -83,7 +83,10 @@ Definitions live in `.claude/commands/`. A PostToolUse hook in `.claude/settings
   - Comma-separated URLs — auto-names sources `endpoint1`, `endpoint2`, …
   - Validates endpoint names against `[a-zA-Z0-9_-]+` to prevent malformed label values
 - `AggregateMetrics(ctx context.Context)` scrapes each endpoint **concurrently** (goroutines with `sync.WaitGroup`, 5s HTTP timeout, 10 MiB body limit), **strips `# TYPE`/`# HELP` metadata** from scraped output to avoid duplicates, injects `origin_container="<name>"` label into every metric line (skipping lines that already have it), prepends self-instrumentation metrics, returns error only if zero sources succeed. Uses `zerolog.Ctx(ctx)` for request-correlated log output (inherits `request_id` from middleware).
-- Self-instrumentation metrics (4 families): `metrics_aggregator_scrape_success` (gauge), `metrics_aggregator_scrape_duration_seconds` (gauge), `metrics_aggregator_requests_total` (counter), `metrics_aggregator_errors_total` (counter)
+- Self-instrumentation metrics (7 families): `metrics_aggregator_scrape_success` (gauge), `metrics_aggregator_scrape_duration_seconds` (histogram), `metrics_aggregator_scrape_errors_total` (counter per-endpoint), `metrics_aggregator_scrape_invalid_samples` (gauge), `metrics_aggregator_requests_total` (counter), `metrics_aggregator_errors_total` (counter), `metrics_aggregator_http_request_duration_seconds` (histogram, emitted by handler)
+- Custom `Histogram` primitive in `pkg/aggregator/histogram.go` — thread-safe, emits Prometheus exposition format
+- Per-endpoint scrape spans via OpenTelemetry (opt-in via `OTEL_TRACES_EXPORTER`)
+- Forwards `X-Request-Id` and `traceparent` headers to scrape targets for correlation
 - `addCustomLabel()` handles label injection: prepends inside existing `{...}` or creates a new label block; skips lines that already contain `origin_container`
 
 ## Key Conventions
@@ -114,6 +117,8 @@ Definitions live in `.claude/commands/`. A PostToolUse hook in `.claude/settings
 | `METRICS_ENDPOINTS` | required | Comma-separated URLs or JSON map of name→URL |
 | `METRICS_AGGREGATOR_PORT` | `9090` | Port to serve `/metrics` |
 | `LOG_LEVEL` | `info` | zerolog level: `debug`, `info`, `warn`, `error` |
+| `OTEL_TRACES_EXPORTER` | `none` | `none`, `stdout`, `otlp` — enables distributed tracing |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | OTLP collector gRPC endpoint (e.g. `jaeger:4317`) |
 
 ## CI/CD Overview
 
