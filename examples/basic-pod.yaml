@@ -1,0 +1,73 @@
+# Minimal sidecar example — annotation-based Prometheus discovery.
+#
+# No Service needed. Prometheus finds the pod via kubernetes_sd_configs
+# and reads the annotations to know which port/path to scrape.
+#
+# Usage:
+#   kubectl apply -f basic-pod.yaml
+#   kubectl port-forward pod/my-app 9090:9090
+#   curl http://localhost:9090/metrics
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+  labels:
+    app: my-app
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  containers:
+    # ── Aggregator sidecar ─────────────────────────────────
+    - name: metrics-aggregator
+      image: ghcr.io/kaiohenricunha/metrics-aggregator:latest
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
+      ports:
+        - containerPort: 9090
+          name: metrics
+      env:
+        - name: METRICS_ENDPOINTS
+          value: '{"api":"http://localhost:8080/metrics","worker":"http://localhost:9100/metrics"}'
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 9090
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 9090
+        initialDelaySeconds: 3
+        periodSeconds: 5
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 64Mi
+
+    # ── Your application containers ────────────────────────
+    # Replace these with your actual workloads.
+
+    - name: api
+      image: my-registry/api-server:v2.1.0
+      ports:
+        - containerPort: 8080
+      # This container exposes Prometheus metrics on :8080/metrics
+
+    - name: worker
+      image: my-registry/background-worker:v1.4.0
+      ports:
+        - containerPort: 9100
+      # This container exposes Prometheus metrics on :9100/metrics
