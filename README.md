@@ -60,13 +60,37 @@ go install github.com/kaiohenricunha/metrics-aggregator@latest
 
 ## Quick start
 
+### Kubernetes (recommended)
+
+Add the aggregator as a sidecar to any pod and point Prometheus at its port:
+
+```yaml
+# In your pod / Deployment spec
+metadata:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+spec:
+  containers:
+    - name: metrics-aggregator
+      image: ghcr.io/kaiohenricunha/metrics-aggregator:latest
+      ports:
+        - containerPort: 9090
+      env:
+        - name: METRICS_ENDPOINTS
+          value: '{"api":"http://localhost:8080/metrics","worker":"http://localhost:9100/metrics"}'
+    # ... your existing containers
+```
+
+Copy-paste ready manifests for Deployment, PodMonitor, Helm, and Kustomize are in [`examples/`](examples/).
+
+### Docker Compose (local dev)
+
 ```bash
 cd examples/docker-compose
 docker compose up
 # then: curl http://localhost:9090/metrics
 ```
-
-See [`examples/`](examples/) for all seven deployment methods (Kubernetes, Helm, Kustomize, Docker Compose).
 
 ## Configuration
 

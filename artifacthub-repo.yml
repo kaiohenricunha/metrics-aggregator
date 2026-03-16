@@ -1,0 +1,9 @@
+# Artifact Hub repository metadata.
+# See https://artifacthub.io/docs/topics/repositories/containers-images/
+#
+# After registering the repository on Artifact Hub, paste the assigned
+# repositoryID below to complete ownership verification.
+repositoryID: ""
+owners:
+  - name: kaiohenricunha
+    email: kaiohsdc@gmail.com
