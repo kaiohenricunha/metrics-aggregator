@@ -23,7 +23,7 @@ jobs:
           go tool cover -html=cover.out -o cover.html
 
       - name: Upload HTML report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: cover.html
