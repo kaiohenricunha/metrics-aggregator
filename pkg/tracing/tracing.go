@@ -3,6 +3,7 @@ package tracing
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"go.opentelemetry.io/otel"
@@ -20,6 +21,9 @@ import (
 //   - "stdout": writes spans to stdout (for development)
 //   - "otlp": sends spans via gRPC to OTEL_EXPORTER_OTLP_ENDPOINT
 //
+// For the "otlp" exporter, TLS is used by default. Set OTEL_EXPORTER_OTLP_INSECURE=true
+// to disable TLS (e.g. for local development with a plaintext collector).
+//
 // Returns a shutdown function that flushes pending spans.
 func InitTracing(serviceName string) (shutdown func(context.Context) error, err error) {
 	exporter := os.Getenv("OTEL_TRACES_EXPORTER")
@@ -36,15 +40,16 @@ func InitTracing(serviceName string) (shutdown func(context.Context) error, err 
 			return nil, err
 		}
 	case "otlp":
-		spanExporter, err = otlptracegrpc.New(context.Background(),
-			otlptracegrpc.WithInsecure(),
-		)
+		opts := []otlptracegrpc.Option{}
+		if os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true" {
+			opts = append(opts, otlptracegrpc.WithInsecure())
+		}
+		spanExporter, err = otlptracegrpc.New(context.Background(), opts...)
 		if err != nil {
 			return nil, err
 		}
 	default:
-		// Unknown exporter: treat as no-op
-		return func(context.Context) error { return nil }, nil
+		return nil, fmt.Errorf("unsupported OTEL_TRACES_EXPORTER value %q: must be one of: none, stdout, otlp", exporter)
 	}
 
 	res, err := resource.Merge(

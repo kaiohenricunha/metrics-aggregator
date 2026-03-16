@@ -1,0 +1,14 @@
+# HELP jobs_processed_total Total jobs processed by the worker
+# TYPE jobs_processed_total counter
+jobs_processed_total{queue="default"} 8491
+jobs_processed_total{queue="priority"} 1203
+# HELP job_duration_seconds Job processing duration
+# TYPE job_duration_seconds summary
+job_duration_seconds{quantile="0.5"} 0.032
+job_duration_seconds{quantile="0.9"} 0.089
+job_duration_seconds{quantile="0.99"} 0.214
+job_duration_seconds_sum 412.8
+job_duration_seconds_count 9694
+# HELP worker_pool_size Current number of active workers
+# TYPE worker_pool_size gauge
+worker_pool_size 8

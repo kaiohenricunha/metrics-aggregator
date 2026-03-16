@@ -153,6 +153,10 @@ func parseTraceparent(tp string) (traceID, spanID string, ok bool) {
 			return "", "", false
 		}
 	}
+	// Reject all-zero IDs — invalid per W3C trace-context spec
+	if traceID == "00000000000000000000000000000000" || spanID == "0000000000000000" {
+		return "", "", false
+	}
 	return traceID, spanID, true
 }
 
@@ -362,7 +366,11 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("tracing setup failed")
 	}
-	defer shutdownTracing(context.Background())
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			log.Error().Err(err).Msg("tracing shutdown error")
+		}
+	}()
 
 	agg, err := aggregator.NewAggregator(os.Getenv("METRICS_ENDPOINTS"))
 	if err != nil {

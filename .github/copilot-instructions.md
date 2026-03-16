@@ -53,7 +53,6 @@ Use `Makefile` targets first so tooling is consistent across local runs and Copi
   - `make e2e` — full run: create kind cluster → deploy sidecar pod → assert → Istio mTLS → teardown (~8-10 min). `promtool` and `istioctl` are auto-installed if missing
   - `make e2e-up` — create kind cluster + build/load image only (no tests); use for manifest validation with `kubectl apply --dry-run=server -f test/e2e/manifests/`
   - `make e2e-keep` — full run but keep cluster alive for `kubectl` inspection
-  - `make e2e-istio` — (deprecated) alias for `make e2e` — Istio is now always included
   - `make e2e-clean` — delete the kind cluster
 
 Direct command equivalents (if Make is unavailable):
@@ -100,6 +99,11 @@ When editing workflows or compose files, rely on YAML schema diagnostics before 
   - Self-instrumentation: `scrape_success`, `scrape_duration_seconds`, `requests_total`, `errors_total`.
   - Injects `origin_container="<endpoint name>"` into every non-comment metric sample line before merge.
 
+- `examples/` contains deployment examples:
+  - Kubernetes: basic pod, Deployment, PodMonitor, service discovery
+  - Helm integration and Kustomize overlays
+  - Docker Compose for local evaluation
+
 - `docker-compose.yaml` defines the local/demo topology:
   - `aggregator` plus two Prometheus demo services (`prometheus1`, `prometheus2`).
   - Aggregator receives `METRICS_ENDPOINTS` as a JSON map of service names to in-network URLs.
@@ -129,3 +133,15 @@ Key files:
 - Aggregator tests use `NewAggregator()` or `newTestAggregator()` for struct-based isolation; no global state.
 - Request correlation: `X-Request-Id` flows through `AggregateMetrics(ctx)` for correlated log output.
 - Graceful shutdown: 10s drain on SIGTERM/SIGINT.
+
+## Working Style
+
+- Prefer targeted action over exploration. Go directly to the relevant file rather than surveying the whole codebase first.
+- Commits should be surgical — only include files relevant to the current task. One concern per commit, Conventional Commits style.
+
+## Verification Discipline
+
+- After implementing a fix, run the relevant tests before reporting success.
+- After editing `.go` files, confirm `go vet ./...` passes.
+- Before opening a PR, run `make check`. All static analysis tools must pass.
+- When fixing a CI failure, reproduce locally first.

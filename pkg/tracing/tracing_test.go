@@ -46,6 +46,14 @@ func TestInitTracing_Stdout(t *testing.T) {
 	}
 }
 
+func TestInitTracing_UnknownExporter(t *testing.T) {
+	t.Setenv("OTEL_TRACES_EXPORTER", "unknown-exporter")
+	_, err := InitTracing("test-service")
+	if err == nil {
+		t.Fatal("expected error for unknown exporter, got nil")
+	}
+}
+
 func TestShutdownTracing(t *testing.T) {
 	t.Setenv("OTEL_TRACES_EXPORTER", "")
 	shutdown, err := InitTracing("test-service")

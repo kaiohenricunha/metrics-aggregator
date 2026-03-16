@@ -1,0 +1,28 @@
+# This is a SIMPLIFIED deployment template showing where the aggregator
+# helpers plug in. Your real template will have more fields.
+#
+# The two key integration points are marked with "◄◄◄".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mychart.fullname" . }}
+  labels:
+    {{- include "mychart.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mychart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mychart.selectorLabels" . | nindent 8 }}
+      annotations:
+        {{- include "mychart.metricsAggregatorAnnotations" . | nindent 8 }}  # ◄◄◄ annotations
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          ports:
+            - containerPort: {{ .Values.service.port }}
+        {{- include "mychart.metricsAggregatorContainer" . | nindent 8 }}    # ◄◄◄ sidecar

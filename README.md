@@ -1,99 +1,113 @@
 # Metrics Aggregator
 
-A **sidecar microservice** that scrapes Prometheus-formatted metrics from multiple containers in the same pod and exposes **one** unified `/metrics` endpoint. This helps work around a known Istio limitation:
+[![CI](https://github.com/kaiohenricunha/metrics-aggregator/actions/workflows/go.yml/badge.svg)](https://github.com/kaiohenricunha/metrics-aggregator/actions/workflows/go.yml)
+[![Lint](https://github.com/kaiohenricunha/metrics-aggregator/actions/workflows/lint.yml/badge.svg)](https://github.com/kaiohenricunha/metrics-aggregator/actions/workflows/lint.yml)
+[![E2E](https://github.com/kaiohenricunha/metrics-aggregator/actions/workflows/e2e.yml/badge.svg)](https://github.com/kaiohenricunha/metrics-aggregator/actions/workflows/e2e.yml)
+[![codecov](https://codecov.io/gh/kaiohenricunha/metrics-aggregator/branch/main/graph/badge.svg)](https://codecov.io/gh/kaiohenricunha/metrics-aggregator)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kaiohenricunha/metrics-aggregator)](https://goreportcard.com/report/github.com/kaiohenricunha/metrics-aggregator)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-Istio’s built-in metrics-merge only supports _one port per pod_ (see [Prometheus, Istio, and mTLS: the definitive explanation](https://superorbital.io/blog/istio-metrics-merging/) for details).
+A Go sidecar that scrapes Prometheus-formatted metrics from every container in a pod, merges them into a single `/metrics` endpoint, and injects an `origin_container` label so you can tell which container produced each metric.
 
-## Features
+## How it works
 
-- Scrape any number of HTTP metric endpoints (from other containers in the pod)  
-- Merge them into a single Prometheus-compatible stream  
-- Expose on a configurable port (default `9090`)  
-- Ideal for multi-container pods running under Istio with strict mTLS
+```
+┌─────────────────────────────────────────────────┐
+│  Pod                                            │
+│                                                 │
+│  ┌───────────┐   localhost:8080/metrics          │
+│  │  api       ├──────────────┐                  │
+│  └───────────┘               │                  │
+│                         ┌────▼──────────┐       │
+│  ┌───────────┐          │  aggregator   │       │
+│  │  worker    ├─────────►  :9090/metrics ◄──── Prometheus
+│  └───────────┘          └───────────────┘       │
+│                localhost:9100/metrics            │
+└─────────────────────────────────────────────────┘
+```
 
-## Running Locally
+- **Concurrent scraping** — each endpoint is fetched in parallel (5 s timeout, 10 MiB body limit)
+- **Metadata stripping** — `# TYPE` and `# HELP` lines are removed to prevent duplicates when merging
+- **Label injection** — every metric line gets an `origin_container="<name>"` label
+- **Best-effort** — partial failures are reported per-endpoint; the request only errors when *all* sources fail
+- **Self-instrumentation** — exposes `scrape_success`, `scrape_duration_seconds`, `requests_total`, and `errors_total`
 
-### Prerequisites
+## Install
 
-- [Docker](https://www.docker.com/get-started) (v20+)  
-- [Docker Compose](https://docs.docker.com/compose/install/) (v1.29+)
+### Docker
 
-### Quick Start
+```bash
+docker pull ghcr.io/kaiohenricunha/metrics-aggregator:latest
+```
 
-1. **Clone the repo**  
-   ```bash
-   git clone git@github.com:kaiohenricunha/metrics-aggregator.git
-   cd metrics-aggregator
-   ```
+Images are signed with [Cosign](https://docs.sigstore.dev/cosign/overview/). Verify with:
 
-2. **Configure endpoints**
-   Edit `docker-compose.yml` (or set an environment variable) to list all HTTP metric sources in the pod:
+```bash
+cosign verify ghcr.io/kaiohenricunha/metrics-aggregator:latest \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp github.com/kaiohenricunha/metrics-aggregator
+```
 
-   ```yaml
-   services:
-     aggregator:
-       environment:
-         METRICS_ENDPOINTS: |
-           http://prometheus1:9091/metrics,
-           http://prometheus2:9092/metrics
-   ```
+### Binary
 
-3. **Build & run**
+Pre-built binaries for 6 platforms (linux/darwin/windows x amd64/arm64) with SBOM and SLSA provenance are available on the [Releases](https://github.com/kaiohenricunha/metrics-aggregator/releases) page.
 
-   ```bash
-   docker-compose up --build
-   ```
+### From source
 
-4. **Verify**
-   Open your browser or curl:
+```bash
+go install github.com/kaiohenricunha/metrics-aggregator@latest
+```
 
-   ```
-   http://localhost:9090/metrics
-   ```
+## Quick start
 
-### Configuration Reference
+```bash
+cd examples/docker-compose
+docker compose up
+# then: curl http://localhost:9090/metrics
+```
+
+See [`examples/`](examples/) for all seven deployment methods (Kubernetes, Helm, Kustomize, Docker Compose).
+
+## Configuration
 
 | Variable | Default | Description |
-| --- | --- | --- |
-| `METRICS_ENDPOINTS` | *—* | **Required.** JSON map or comma-separated endpoint list to scrape. |
-| `METRICS_AGGREGATOR_PORT` | `9090` | Port on which merged metrics are exposed. |
-| `METRICS_SECURITY_MODE` | `strict` | Endpoint validation mode. `strict` blocks unsafe URL forms; `legacy` keeps previous permissive behavior. |
-| `METRICS_CACHE_TTL` | `1s` | Cache window for merged `/metrics` output to reduce fan-out amplification. |
-| `METRICS_MAX_INFLIGHT` | `32` | Maximum concurrent `/metrics` requests served before returning `503`. |
-| `METRICS_SERVER_READ_HEADER_TIMEOUT` | `2s` | Maximum time to receive request headers. |
-| `METRICS_SERVER_READ_TIMEOUT` | `5s` | Maximum time to read full request. |
-| `METRICS_SERVER_WRITE_TIMEOUT` | `10s` | Maximum time to write response. |
-| `METRICS_SERVER_IDLE_TIMEOUT` | `60s` | Keep-alive idle connection timeout. |
-| `METRICS_SERVER_MAX_HEADER_BYTES` | `1048576` | Max request header size (1 MiB). |
-| `OTEL_TRACES_EXPORTER` | `none` | Tracing exporter: `none` (disabled), `stdout`, or `otlp`. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | *—* | OTLP collector gRPC endpoint (e.g. `jaeger:4317`). Required when `OTEL_TRACES_EXPORTER=otlp`. |
+|---|---|---|
+| `METRICS_ENDPOINTS` | *required* | JSON map or comma-separated URLs to scrape |
+| `METRICS_AGGREGATOR_PORT` | `9090` | Port for the `/metrics` and `/healthz` endpoints |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 
-### Security Defaults
+**JSON map** (recommended — gives meaningful `origin_container` label values):
 
-- `strict` endpoint mode rejects unsafe endpoint shapes (unsupported schemes, URL credentials, and non-metrics paths).
-- Redirect responses from scrape targets are not followed by default.
-- Invalid metric samples are dropped and reflected in self-instrumentation metrics.
-- The server applies explicit HTTP timeouts and bounded request concurrency.
-
-> **Note:** The two demo services, `prometheus1` and `prometheus2`, each run a tiny Prometheus instance exposing sample metrics. Their configs live in `prometheus1.yml` and `prometheus2.yml`.
-
-## Stopping & Cleanup
-
-```bash
-docker-compose down
+```
+METRICS_ENDPOINTS='{"api":"http://localhost:8080/metrics","worker":"http://localhost:9100/metrics"}'
 ```
 
-This will also remove the demo Prometheus containers.
+**Comma-separated URLs** (auto-names endpoints as `endpoint1`, `endpoint2`, ...):
 
-## Viewing Logs
-
-To tail the aggregator’s logs:
-
-```bash
-docker-compose logs -f aggregator
+```
+METRICS_ENDPOINTS=http://localhost:8080/metrics,http://localhost:9100/metrics
 ```
 
----
+<details>
+<summary><strong>Advanced configuration</strong></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `METRICS_SECURITY_MODE` | `strict` | `strict` blocks unsafe URL forms; `legacy` keeps permissive behavior |
+| `METRICS_CACHE_TTL` | `1s` | Cache window for merged output to reduce fan-out amplification |
+| `METRICS_MAX_INFLIGHT` | `32` | Max concurrent `/metrics` requests before returning `503` |
+| `METRICS_SERVER_READ_HEADER_TIMEOUT` | `2s` | Max time to receive request headers |
+| `METRICS_SERVER_READ_TIMEOUT` | `5s` | Max time to read full request |
+| `METRICS_SERVER_WRITE_TIMEOUT` | `10s` | Max time to write response |
+| `METRICS_SERVER_IDLE_TIMEOUT` | `60s` | Keep-alive idle connection timeout |
+| `METRICS_SERVER_MAX_HEADER_BYTES` | `1048576` | Max request header size (1 MiB) |
+| `OTEL_TRACES_EXPORTER` | `none` | Tracing exporter: `none` (disabled), `stdout`, or `otlp` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | *—* | OTLP collector gRPC endpoint (e.g. `jaeger:4317`). Required when `OTEL_TRACES_EXPORTER=otlp` |
+| `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set to `true` to disable TLS for the OTLP gRPC exporter (e.g. local Jaeger) |
+
+**Security defaults:** `strict` mode rejects unsafe endpoint shapes (unsupported schemes, URL credentials, non-metrics paths). Redirect responses from scrape targets are not followed. Invalid metric samples are dropped and reflected in self-instrumentation metrics.
+
+</details>
 
 ## Observability
 
@@ -124,7 +138,7 @@ Set `OTEL_TRACES_EXPORTER=otlp` and `OTEL_EXPORTER_OTLP_ENDPOINT=<collector>:431
 
 To try locally with Jaeger:
 ```bash
-docker compose --profile tracing up --build
+OTEL_EXPORTER_OTLP_INSECURE=true docker compose --profile tracing up --build
 # Open http://localhost:16686 for Jaeger UI
 ```
 
@@ -132,8 +146,35 @@ docker compose --profile tracing up --build
 
 Inbound `traceparent` headers are parsed and `trace_id`/`span_id` fields are added to structured log output. `X-Request-Id` is forwarded to scrape targets for request correlation.
 
----
+## Deployment examples
 
-> **Read more about the underlying Istio limitation:**
-> [https://superorbital.io/blog/istio-metrics-merging/](https://superorbital.io/blog/istio-metrics-merging/)
-> *”Primary among these limitations is the fact that you cannot … fetch metrics from multiple ports in a single pod …”*
+| Example | Method | When to use |
+|---|---|---|
+| [`basic-pod.yaml`](examples/basic-pod.yaml) | Pod annotations | Standard Prometheus Kubernetes SD |
+| [`deployment.yaml`](examples/deployment.yaml) | Pod annotations | Production Deployments |
+| [`pod-monitor.yaml`](examples/pod-monitor.yaml) | PodMonitor CRD | Prometheus Operator |
+| [`service-discovery.yaml`](examples/service-discovery.yaml) | Service + static config | Non-annotation setups |
+| [`helm-integration/`](examples/helm-integration/) | Helm templates | Shared microservices chart |
+| [`kustomize/`](examples/kustomize/) | Kustomize overlay | ArgoCD / kubectl workflows |
+| [`docker-compose/`](examples/docker-compose/) | Docker Compose | Local evaluation |
+
+The aggregator needs no Kubernetes Service to function — it works entirely within the pod network.
+
+## Why this exists
+
+Istio's built-in metrics-merge only supports one metrics port per pod, which breaks multi-container pods where each container exposes its own `/metrics`. The metrics-aggregator solves this by scraping all containers and serving a single merged endpoint. See [Prometheus, Istio, and mTLS](https://superorbital.io/blog/istio-metrics-merging/) for background. It's equally useful outside Istio for any scenario where you need to merge metrics from multiple containers.
+
+## Development
+
+```bash
+make check       # build + vet + race tests + lint (pre-PR gate)
+make smoke       # Docker Compose smoke test (~30 s)
+make e2e         # kind + Istio E2E suite (~8-10 min)
+make cover-html  # race-detector coverage report
+```
+
+See [`CLAUDE.md`](CLAUDE.md) for full development docs.
+
+## License
+
+[Apache 2.0](LICENSE)

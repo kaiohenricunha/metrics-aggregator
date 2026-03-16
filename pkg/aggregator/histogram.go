@@ -13,7 +13,6 @@ import (
 type Histogram struct {
 	bounds []float64      // sorted bucket boundaries (always ends with +Inf)
 	counts []atomic.Int64 // cumulative bucket counters, aligned with bounds
-	count  atomic.Int64
 	mu     sync.Mutex
 	sum    float64
 }
@@ -52,15 +51,15 @@ func (h *Histogram) Observe(v float64) {
 			h.counts[i].Add(1)
 		}
 	}
-	h.count.Add(1)
 	h.mu.Lock()
 	h.sum += v
 	h.mu.Unlock()
 }
 
 // Count returns the total number of observations.
+// Derived from the +Inf bucket to stay consistent with RenderSamples output.
 func (h *Histogram) Count() int64 {
-	return h.count.Load()
+	return h.counts[len(h.counts)-1].Load()
 }
 
 // Sum returns the sum of all observed values.
@@ -82,7 +81,9 @@ func RenderSamples(name string, labels string, h *Histogram) string {
 	h.mu.Lock()
 	sum := h.sum
 	h.mu.Unlock()
-	count := h.count.Load()
+	// Derive count from +Inf bucket so _count always equals the +Inf bucket value,
+	// satisfying the Prometheus histogram invariant even under concurrent Observe calls.
+	count := h.counts[len(h.counts)-1].Load()
 
 	for i, bound := range h.bounds {
 		le := formatLE(bound)

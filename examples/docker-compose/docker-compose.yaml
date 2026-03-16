@@ -1,0 +1,48 @@
+# Try the metrics-aggregator locally with two sample apps.
+#
+# Unlike Kubernetes (where all containers share localhost), Docker Compose
+# gives each service its own network. The aggregator reaches the other
+# services by container name (Docker DNS), not localhost.
+#
+# Usage:
+#   cd examples/docker-compose
+#   docker compose up --build
+#   curl http://localhost:9090/metrics    # merged output
+#   curl http://localhost:8081/metrics    # app-a raw metrics
+#   curl http://localhost:8082/metrics    # app-b raw metrics
+#   docker compose down -v
+
+services:
+  # ── Metrics aggregator ───────────────────────────────────
+  aggregator:
+    image: ghcr.io/kaiohenricunha/metrics-aggregator:latest
+    ports:
+      - "9090:9090"
+    environment:
+      # In Compose, use service names instead of localhost.
+      METRICS_ENDPOINTS: '{"app-a":"http://app-a:8080/metrics","app-b":"http://app-b:8080/metrics"}'
+      METRICS_AGGREGATOR_PORT: "9090"
+      METRICS_SECURITY_MODE: legacy   # allows non-localhost URLs
+      LOG_LEVEL: debug
+    depends_on:
+      - app-a
+      - app-b
+
+  # ── Sample app A: HTTP API server ────────────────────────
+  # Nginx serving static Prometheus metrics to simulate an app.
+  app-a:
+    image: nginx:alpine
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./metrics/app-a.txt:/usr/share/nginx/metrics/metrics.txt:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # ── Sample app B: background worker ──────────────────────
+  app-b:
+    image: nginx:alpine
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./metrics/app-b.txt:/usr/share/nginx/metrics/metrics.txt:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro

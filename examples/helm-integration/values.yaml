@@ -1,0 +1,46 @@
+# ── Existing chart values (abbreviated) ────────────────────
+replicaCount: 3
+image:
+  repository: my-registry/my-service
+  tag: v2.1.0
+service:
+  port: 8080
+
+# ── Metrics aggregator sidecar ─────────────────────────────
+# Enable this when the pod has multiple containers exposing
+# Prometheus metrics and you want a single scrape target.
+metricsAggregator:
+  enabled: false
+  image:
+    repository: ghcr.io/kaiohenricunha/metrics-aggregator
+    tag: latest
+  port: 9090
+  logLevel: info
+
+  # Map of name → localhost URL for each container's metrics endpoint.
+  # The key becomes the origin_container label value.
+  endpoints: {}
+  #  endpoints:
+  #    web: http://localhost:8080/metrics
+  #    cache: http://localhost:9100/metrics
+  #    nginx: http://localhost:9113/metrics
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+  # Prometheus discovery method: "annotations", "podMonitor", or "none".
+  # - annotations: adds prometheus.io/* pod annotations (default)
+  # - podMonitor: creates a PodMonitor CRD (requires Prometheus Operator)
+  # - none: no discovery configured (you manage it yourself)
+  discovery: annotations
+
+  # Only used when discovery is "podMonitor".
+  podMonitor:
+    interval: 15s
+    # Extra labels added to the PodMonitor (e.g. for Prometheus selector matching).
+    additionalLabels: {}
+    #  release: kube-prometheus-stack

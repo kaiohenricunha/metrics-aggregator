@@ -1,0 +1,94 @@
+# Prometheus Operator discovery using a PodMonitor CRD.
+#
+# Use this when your cluster runs the Prometheus Operator (kube-prometheus-stack).
+# The PodMonitor tells Prometheus to scrape the "metrics" port on matching pods
+# — no Service or annotations needed.
+#
+# Usage:
+#   kubectl apply -f pod-monitor.yaml
+#
+# Prerequisites:
+#   - Prometheus Operator (monitoring.coreos.com/v1 CRDs must exist)
+#   - A Prometheus instance selecting PodMonitors in this namespace
+
+# ── PodMonitor ─────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: my-app
+  labels:
+    app: my-app
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  podMetricsEndpoints:
+    - port: metrics          # matches the aggregator's port name
+      path: /metrics
+      interval: 15s
+---
+# ── Deployment (same pattern as deployment.yaml) ──────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  labels:
+    app: my-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+      # No prometheus.io/* annotations needed — the PodMonitor handles discovery.
+    spec:
+      containers:
+        - name: metrics-aggregator
+          image: ghcr.io/kaiohenricunha/metrics-aggregator:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: METRICS_ENDPOINTS
+              value: '{"app":"http://localhost:8080/metrics","sidecar":"http://localhost:9200/metrics"}'
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+
+        - name: app
+          image: my-registry/app:v1.0.0
+          ports:
+            - containerPort: 8080
+
+        - name: sidecar
+          image: my-registry/envoy-sidecar:v1.0.0
+          ports:
+            - containerPort: 9200

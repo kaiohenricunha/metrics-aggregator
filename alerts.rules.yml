@@ -2,7 +2,7 @@ groups:
   - name: metrics-aggregator
     rules:
       - alert: MetricsAggregatorAllEndpointsDown
-        expr: sum(metrics_aggregator_scrape_success) == 0
+        expr: absent(metrics_aggregator_scrape_success) or sum(metrics_aggregator_scrape_success) == 0
         for: 2m
         labels:
           severity: critical

@@ -65,6 +65,8 @@ docker compose down -v
 | `/smoke` | `make smoke` — Docker Compose stack smoke test (~30 s) |
 | `/cover` | `make test-race` + `make cover-html` — coverage report |
 | `/test-one <TestName>` | `make test-one TEST='^<TestName>$'` — run one test by exact name |
+| `/vulncheck` | `make vulncheck` — govulncheck vulnerability scanner |
+| `/e2e` | `make e2e-keep` — K8s E2E tests via kind, keeps cluster (~8-10 min) |
 | `make e2e` | K8s E2E tests via kind, includes Istio (~8-10 min) — creates cluster, runs all phases, tears down |
 | `make e2e-up` | Create kind cluster + build/load image only (no tests) — use for manifest validation |
 | `make e2e-keep` | K8s E2E, keep cluster for debugging |

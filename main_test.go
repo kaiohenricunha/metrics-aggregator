@@ -556,6 +556,8 @@ func TestParseTraceparent(t *testing.T) {
 		{"bad trace_id length", "00-0af765-b7ad6b7169203331-01", false, "", ""},
 		{"bad span_id length", "00-0af7651916cd43dd8448eb211c80319c-b7ad-01", false, "", ""},
 		{"uppercase hex rejected", "00-0AF7651916CD43DD8448EB211C80319C-B7AD6B7169203331-01", false, "", ""},
+		{"all-zero trace_id rejected", "00-00000000000000000000000000000000-b7ad6b7169203331-01", false, "", ""},
+		{"all-zero span_id rejected", "00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01", false, "", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

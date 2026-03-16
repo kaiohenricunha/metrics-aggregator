@@ -1,0 +1,29 @@
+# Base Deployment — your application without the aggregator sidecar.
+# The overlay patches this to inject the sidecar when needed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  labels:
+    app: my-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+        - name: web
+          image: my-registry/web-app:v2.0.0
+          ports:
+            - containerPort: 8080
+              name: http
+        - name: worker
+          image: my-registry/background-worker:v1.3.0
+          ports:
+            - containerPort: 9100
+              name: worker-metrics

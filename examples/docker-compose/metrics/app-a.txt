@@ -1,0 +1,17 @@
+# HELP http_requests_total Total HTTP requests handled
+# TYPE http_requests_total counter
+http_requests_total{method="GET",status="200"} 1027
+http_requests_total{method="POST",status="201"} 56
+http_requests_total{method="GET",status="404"} 12
+# HELP http_request_duration_seconds HTTP request latency
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{le="0.01"} 540
+http_request_duration_seconds_bucket{le="0.05"} 900
+http_request_duration_seconds_bucket{le="0.25"} 1070
+http_request_duration_seconds_bucket{le="1"} 1090
+http_request_duration_seconds_bucket{le="+Inf"} 1095
+http_request_duration_seconds_sum 28.7
+http_request_duration_seconds_count 1095
+# HELP go_goroutines Number of goroutines
+# TYPE go_goroutines gauge
+go_goroutines 42

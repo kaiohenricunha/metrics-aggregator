@@ -1,0 +1,98 @@
+# Service-based discovery with a static Prometheus scrape config.
+#
+# Use this when annotation-based or Operator-based discovery is not available.
+# A Service gives Prometheus a stable DNS name to target.
+#
+# Usage:
+#   kubectl apply -f service-discovery.yaml
+#
+# Prometheus config:
+#   scrape_configs:
+#     - job_name: my-app
+#       static_configs:
+#         - targets: ['my-app-metrics.default.svc:9090']
+
+# ── Deployment ─────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  labels:
+    app: my-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+        - name: metrics-aggregator
+          image: ghcr.io/kaiohenricunha/metrics-aggregator:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: METRICS_ENDPOINTS
+              value: '{"nginx":"http://localhost:9113/metrics","app":"http://localhost:8080/metrics"}'
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+
+        - name: nginx-exporter
+          image: nginx/nginx-prometheus-exporter:1.1
+          args:
+            - -nginx.scrape-uri=http://localhost:80/stub_status
+          ports:
+            - containerPort: 9113
+
+        - name: app
+          image: my-registry/app:v2.0.0
+          ports:
+            - containerPort: 8080
+---
+# ── Service (exposes aggregator port for Prometheus to scrape) ──
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-metrics
+spec:
+  selector:
+    app: my-app
+  ports:
+    - port: 9090
+      targetPort: 9090
+      name: metrics
