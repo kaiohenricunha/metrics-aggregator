@@ -18,6 +18,9 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 )
 
 // centralised port definitions
@@ -181,6 +184,10 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 		wg.Add(1)
 		go func(idx int, ep Endpoint) {
 			defer wg.Done()
+			scrapeCtx, span := otel.Tracer("metrics-aggregator").Start(ctx, "scrape "+ep.Name)
+			span.SetAttributes(attribute.String("endpoint.name", ep.Name))
+			defer span.End()
+
 			start := time.Now()
 			sanitizedURL := sanitizeURLForLog(ep.URL)
 			failed := true
@@ -189,12 +196,16 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 				a.scrapeDurationHist[ep.Name].Observe(dur.Seconds())
 				if failed {
 					a.scrapeErrors[idx].Add(1)
+					span.SetStatus(otelcodes.Error, "scrape failed")
+				} else {
+					span.SetStatus(otelcodes.Ok, "")
 				}
 			}()
 
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.URL, nil)
+			req, err := http.NewRequestWithContext(scrapeCtx, http.MethodGet, ep.URL, nil)
 			if err != nil {
 				logger.Error().Err(err).Str("url", sanitizedURL).Msg("request creation failed")
+				span.RecordError(err)
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
@@ -208,11 +219,13 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 			resp, err := a.client.Do(req)
 			if err != nil {
 				logger.Error().Err(err).Str("url", sanitizedURL).Msg("HTTP GET failed")
+				span.RecordError(err)
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
 			if resp.StatusCode != http.StatusOK {
 				logger.Warn().Int("status_code", resp.StatusCode).Str("url", sanitizedURL).Msg("non-200 response")
+				span.RecordError(fmt.Errorf("non-200 status: %d", resp.StatusCode))
 				resp.Body.Close()
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
@@ -222,6 +235,7 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 			resp.Body.Close()
 			if err != nil {
 				logger.Error().Err(err).Str("url", sanitizedURL).Msg("read body failed")
+				span.RecordError(err)
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}

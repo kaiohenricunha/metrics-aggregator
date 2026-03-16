@@ -13,6 +13,9 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // TestNewAggregator tests the Aggregator constructor with various inputs.
@@ -843,5 +846,90 @@ func TestAggregator_NoHeadersWhenContextEmpty(t *testing.T) {
 	}
 	if gotTraceparent != "" {
 		t.Fatalf("expected no traceparent header, got %q", gotTraceparent)
+	}
+}
+
+func setupTestTracing(t *testing.T) *tracetest.InMemoryExporter {
+	t.Helper()
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	original := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		tp.Shutdown(context.Background())
+		otel.SetTracerProvider(original)
+	})
+	return exporter
+}
+
+func TestAggregator_CreatesPerEndpointSpans(t *testing.T) {
+	exporter := setupTestTracing(t)
+
+	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv1.Close()
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv2.Close()
+
+	agg := newTestAggregator([]Endpoint{
+		{Name: "svc1", URL: srv1.URL},
+		{Name: "svc2", URL: srv2.URL},
+	})
+	agg.AggregateMetrics(context.Background())
+
+	spans := exporter.GetSpans()
+	names := map[string]bool{}
+	for _, s := range spans {
+		names[s.Name] = true
+	}
+	if !names["scrape svc1"] || !names["scrape svc2"] {
+		t.Fatalf("expected 'scrape svc1' and 'scrape svc2' spans, got: %v", names)
+	}
+}
+
+func TestAggregator_ScrapeSpanRecordsError(t *testing.T) {
+	exporter := setupTestTracing(t)
+
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer bad.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer good.Close()
+
+	agg := newTestAggregator([]Endpoint{
+		{Name: "good", URL: good.URL},
+		{Name: "bad", URL: bad.URL},
+	})
+	agg.AggregateMetrics(context.Background())
+
+	spans := exporter.GetSpans()
+	for _, s := range spans {
+		if s.Name == "scrape bad" {
+			if len(s.Events) == 0 {
+				t.Fatal("expected error event on bad endpoint span")
+			}
+			return
+		}
+	}
+	t.Fatal("span 'scrape bad' not found")
+}
+
+func TestAggregator_NoSpansWhenNoTracer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv.Close()
+
+	// Use default no-op global tracer (don't set up test tracing)
+	agg := newTestAggregator([]Endpoint{{Name: "svc", URL: srv.URL}})
+	_, err := agg.AggregateMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

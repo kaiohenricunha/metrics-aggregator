@@ -15,6 +15,10 @@ import (
 	"time"
 
 	"github.com/kaiohenricunha/metrics-aggregator/pkg/aggregator"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // freePort returns an available TCP port.
@@ -568,5 +572,75 @@ func TestParseTraceparent(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func setupTestTracing(t *testing.T) *tracetest.InMemoryExporter {
+	t.Helper()
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	original := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		tp.Shutdown(context.Background())
+		otel.SetTracerProvider(original)
+	})
+	return exporter
+}
+
+func TestTracingMiddleware_CreatesSpan(t *testing.T) {
+	exporter := setupTestTracing(t)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "0s")
+	t.Setenv("METRICS_MAX_INFLIGHT", "32")
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	spans := exporter.GetSpans()
+	found := false
+	for _, s := range spans {
+		if s.Name == "GET /metrics" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected span named 'GET /metrics', got %d spans", len(spans))
+	}
+}
+
+func TestTracingMiddleware_NoopWhenDisabled(t *testing.T) {
+	// Don't set up any TracerProvider — use default no-op
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "0s")
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 }

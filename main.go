@@ -18,8 +18,13 @@ import (
 	"time"
 
 	"github.com/kaiohenricunha/metrics-aggregator/pkg/aggregator"
+	"github.com/kaiohenricunha/metrics-aggregator/pkg/tracing"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 const (
@@ -298,6 +303,27 @@ func loadHTTPServerConfigFromEnv() httpServerConfig {
 	}
 }
 
+// tracingMiddleware extracts inbound W3C trace context and creates a span for each request.
+func tracingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		tracer := otel.Tracer("metrics-aggregator")
+		ctx, span := tracer.Start(ctx, r.Method+" "+r.URL.Path)
+		defer span.End()
+
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r.WithContext(ctx))
+
+		span.SetAttributes(
+			attribute.String("http.method", r.Method),
+			attribute.Int("http.status_code", rec.status),
+		)
+		if rec.status >= 400 {
+			span.SetStatus(codes.Error, http.StatusText(rec.status))
+		}
+	})
+}
+
 func run(ctx context.Context, agg *aggregator.Aggregator, addr string) error {
 	cfg := loadHTTPServerConfigFromEnv()
 	mux := http.NewServeMux()
@@ -306,7 +332,7 @@ func run(ctx context.Context, agg *aggregator.Aggregator, addr string) error {
 	})
 	mux.HandleFunc("/metrics", makeMetricsHandler(agg, cfg))
 
-	handler := requestIDMiddleware(mux)
+	handler := requestIDMiddleware(tracingMiddleware(mux))
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
@@ -332,6 +358,12 @@ func run(ctx context.Context, agg *aggregator.Aggregator, addr string) error {
 }
 
 func main() {
+	shutdownTracing, err := tracing.InitTracing("metrics-aggregator")
+	if err != nil {
+		log.Fatal().Err(err).Msg("tracing setup failed")
+	}
+	defer shutdownTracing(context.Background())
+
 	agg, err := aggregator.NewAggregator(os.Getenv("METRICS_ENDPOINTS"))
 	if err != nil {
 		log.Fatal().Err(err).Msg("setup endpoints failed")
