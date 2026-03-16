@@ -94,6 +94,19 @@ Definitions live in `.claude/commands/`. A PostToolUse hook in `.claude/settings
 - **Testing:** Use `httptest` servers for all HTTP-facing tests; keep coverage from dropping on touched paths
 - **Static analysis:** All three tools (`staticcheck`, `revive`, `govulncheck`) must pass before merge
 
+## Working Style
+
+- **Prefer targeted action over exploration.** This is a small, focused Go project (~1,750 lines across 7 files). Go directly to the relevant file and make the change rather than surveying the whole codebase first. Only explore broadly when scope is genuinely unclear.
+- **Commits should be surgical.** Before committing, verify with `git diff --staged` that only files relevant to the current task are included. Do not bundle unrelated formatting or refactoring changes.
+- **One concern per commit.** Follow the existing Conventional Commits style. Each commit addresses exactly one concern.
+
+## Verification Discipline
+
+- After implementing a fix, **run the relevant test(s)** before reporting success. At minimum: `go test ./pkg/aggregator -run '^TestRelevantName$' -v` for aggregator changes, or `go test -v ./...` for cross-cutting changes.
+- After editing `.go` files, confirm `go vet ./...` passes (the PostToolUse hook handles `gofmt`, but `go vet` catches semantic issues).
+- Before opening a PR, run `/check` (`make check` = build + vet + race tests + lint). All three static analysis tools must pass.
+- When fixing a CI failure, reproduce locally first, then verify the fix resolves it end-to-end before pushing.
+
 ## Environment Variables
 
 | Variable | Default | Description |
