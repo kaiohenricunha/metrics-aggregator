@@ -191,6 +191,22 @@ ensure_istioctl() {
   info "istioctl installed to /tmp/istioctl"
 }
 
+# ── Prometheus query helper ───────────────────────────────────────
+
+# prom_query_to PORT OUTPUT_FILE QUERY DESCRIPTION
+# Queries a Prometheus instance and appends evidence to the output file.
+prom_query_to() {
+  local port="$1" output_file="$2" query="$3" desc="$4"
+  local result
+  result=$(curl -sf "http://localhost:${port}/api/v1/query" \
+    --data-urlencode "query=$query" 2>/dev/null || echo '{"status":"error"}')
+  echo "--- $desc ---" >> "$output_file"
+  echo "query: $query" >> "$output_file"
+  echo "result: $result" >> "$output_file"
+  echo "" >> "$output_file"
+  echo "$result"
+}
+
 # ── Report ───────────────────────────────────────────────────────
 write_report() {
   local dir="$1"

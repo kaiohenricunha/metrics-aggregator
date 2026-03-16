@@ -132,8 +132,8 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 	return agg, nil
 }
 
-// Endpoints returns the configured endpoints (read-only copy).
-func (a *Aggregator) Endpoints() []Endpoint {
+// getEndpoints returns the configured endpoints (read-only copy).
+func (a *Aggregator) getEndpoints() []Endpoint {
 	out := make([]Endpoint, len(a.endpoints))
 	copy(out, a.endpoints)
 	return out
@@ -234,8 +234,15 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 	}
 	wg.Wait()
 
+	// Pre-allocate merged slice: 6 HELP/TYPE headers + 3 lines per endpoint
+	// + 4 counter HELP/TYPE/value lines + scraped lines.
+	totalLines := 10 + 3*len(a.endpoints)
+	for _, r := range results {
+		totalLines += len(r.lines)
+	}
+	merged := make([]string, 0, totalLines)
+
 	// Build self-instrumentation metrics (M1)
-	var merged []string
 	merged = append(merged,
 		"# HELP metrics_aggregator_scrape_success Whether the last scrape of an endpoint succeeded.",
 		"# TYPE metrics_aggregator_scrape_success gauge",

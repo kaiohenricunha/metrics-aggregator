@@ -12,7 +12,7 @@ GO_VERSION ?= $(shell awk '/^go / {print $$2}' go.mod)
 
 COMPOSE_ENV = AGG_PORT=$(AGG_PORT) PROM_PORT=$(PROM_PORT) PROM1_EXT=$(PROM1_EXT) PROM2_EXT=$(PROM2_EXT) GO_VERSION=$(GO_VERSION)
 
-.PHONY: help tools-install tools-install-ls build test test-one test-race cover-html fmt vet tidy lint vulncheck check compose-config compose-up compose-down smoke e2e e2e-up e2e-istio e2e-keep e2e-clean
+.PHONY: help tools-install tools-install-ls build test test-one test-race cover-html fmt vet tidy lint vulncheck check compose-config compose-up compose-down smoke e2e e2e-up e2e-keep e2e-clean
 
 help:
 	@printf "%s\n" \
@@ -33,7 +33,6 @@ help:
 	"make smoke                      # compose up + health probes + compose down" \
 	"make e2e                        # K8s e2e tests via kind, includes Istio (~8-10 min)" \
 	"make e2e-up                     # create kind cluster + load image (no tests)" \
-	"make e2e-istio                  # (deprecated) alias for 'make e2e'" \
 	"make e2e-keep                   # K8s e2e, keep cluster for debugging" \
 	"make e2e-clean                  # delete e2e kind cluster"
 
@@ -105,9 +104,6 @@ e2e-up:	## Create kind cluster + build/load image (no tests)
 	kind load docker-image metrics-aggregator:e2e --name $(E2E_CLUSTER)
 	@echo "Cluster ready. Validate manifests with:"
 	@echo "  kubectl apply --dry-run=server -f test/e2e/manifests/"
-
-e2e-istio:	## (deprecated) Istio is now always included — alias for 'make e2e'
-	bash test/e2e/run.sh
 
 e2e-keep:	## K8s e2e, keep cluster for debugging
 	bash test/e2e/run.sh --keep-cluster

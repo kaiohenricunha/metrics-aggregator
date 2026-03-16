@@ -297,31 +297,18 @@ start_port_forward "$NAMESPACE" svc/observer-prometheus "${PF_OBSERVER_PORT}:909
 
 : > "$EVIDENCE_DIR/observer-queries.txt"
 
-# Helper: query the observer Prometheus and log the result
-prom_query() {
-  local query="$1" desc="$2"
-  local result
-  result=$(curl -sf "http://localhost:${PF_OBSERVER_PORT}/api/v1/query" \
-    --data-urlencode "query=$query" 2>/dev/null || echo '{"status":"error"}')
-  echo "--- $desc ---" >> "$EVIDENCE_DIR/observer-queries.txt"
-  echo "query: $query" >> "$EVIDENCE_DIR/observer-queries.txt"
-  echo "result: $result" >> "$EVIDENCE_DIR/observer-queries.txt"
-  echo "" >> "$EVIDENCE_DIR/observer-queries.txt"
-  echo "$result"
-}
-
 # Evidence 1 — Prometheus can parse & ingest our output
-UP_RESULT=$(prom_query 'up{job="aggregator"}' "aggregator up")
+UP_RESULT=$(prom_query_to "$PF_OBSERVER_PORT" "$EVIDENCE_DIR/observer-queries.txt" 'up{job="aggregator"}' "aggregator up")
 UP_VALUE=$(echo "$UP_RESULT" | jq -r '.data.result[0].value[1] // "missing"' 2>/dev/null || echo "missing")
 assert_eq "$UP_VALUE" "1" "observer: up{job=aggregator} == 1"
 
 # Origin container series exist in observer
-ORIGIN_COUNT=$(prom_query 'count({origin_container=~".+"})' "origin_container series count")
+ORIGIN_COUNT=$(prom_query_to "$PF_OBSERVER_PORT" "$EVIDENCE_DIR/observer-queries.txt" 'count({origin_container=~".+"})' "origin_container series count")
 ORIGIN_VALUE=$(echo "$ORIGIN_COUNT" | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "0")
 assert_gt "$ORIGIN_VALUE" "0" "observer: origin_container series count > 0"
 
 # Self-instrumentation in observer
-SCRAPE_SUCCESS=$(prom_query 'metrics_aggregator_scrape_success' "scrape_success in observer")
+SCRAPE_SUCCESS=$(prom_query_to "$PF_OBSERVER_PORT" "$EVIDENCE_DIR/observer-queries.txt" 'metrics_aggregator_scrape_success' "scrape_success in observer")
 SCRAPE_STATUS=$(echo "$SCRAPE_SUCCESS" | jq -r '.data.resultType // "error"' 2>/dev/null || echo "error")
 if [[ "$SCRAPE_STATUS" == "vector" ]]; then
   pass "observer: metrics_aggregator_scrape_success series exist"
@@ -330,12 +317,12 @@ else
 fi
 
 # Sustained stability
-AVG_UP=$(prom_query 'avg_over_time(up{job="aggregator"}[60s])' "sustained scrape stability")
+AVG_UP=$(prom_query_to "$PF_OBSERVER_PORT" "$EVIDENCE_DIR/observer-queries.txt" 'avg_over_time(up{job="aggregator"}[60s])' "sustained scrape stability")
 AVG_VALUE=$(echo "$AVG_UP" | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "0")
 assert_eq "$AVG_VALUE" "1" "observer: avg_over_time(up[60s]) == 1 (sustained stability)"
 
 # Samples scraped
-SAMPLES=$(prom_query 'scrape_samples_scraped{job="aggregator"}' "samples scraped")
+SAMPLES=$(prom_query_to "$PF_OBSERVER_PORT" "$EVIDENCE_DIR/observer-queries.txt" 'scrape_samples_scraped{job="aggregator"}' "samples scraped")
 SAMPLES_VALUE=$(echo "$SAMPLES" | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "0")
 assert_gt "$SAMPLES_VALUE" "0" "observer: scrape_samples_scraped > 0"
 
@@ -422,26 +409,13 @@ start_port_forward "$NAMESPACE" svc/observer-prometheus-istio "${PF_ISTIO_OBSERV
 
 : > "$EVIDENCE_DIR/istio-observer-queries.txt"
 
-# Helper: query the in-mesh observer Prometheus
-istio_prom_query() {
-  local query="$1" desc="$2"
-  local result
-  result=$(curl -sf "http://localhost:${PF_ISTIO_OBSERVER_PORT}/api/v1/query" \
-    --data-urlencode "query=$query" 2>/dev/null || echo '{"status":"error"}')
-  echo "--- $desc ---" >> "$EVIDENCE_DIR/istio-observer-queries.txt"
-  echo "query: $query" >> "$EVIDENCE_DIR/istio-observer-queries.txt"
-  echo "result: $result" >> "$EVIDENCE_DIR/istio-observer-queries.txt"
-  echo "" >> "$EVIDENCE_DIR/istio-observer-queries.txt"
-  echo "$result"
-}
-
 # Verify in-mesh observer can scrape through mTLS
-ISTIO_UP_RESULT=$(istio_prom_query 'up{job="aggregator"}' "aggregator up via mTLS")
+ISTIO_UP_RESULT=$(prom_query_to "$PF_ISTIO_OBSERVER_PORT" "$EVIDENCE_DIR/istio-observer-queries.txt" 'up{job="aggregator"}' "aggregator up via mTLS")
 ISTIO_UP_VALUE=$(echo "$ISTIO_UP_RESULT" | jq -r '.data.result[0].value[1] // "missing"' 2>/dev/null || echo "missing")
 assert_eq "$ISTIO_UP_VALUE" "1" "Istio STRICT: up{job=aggregator} == 1 via mTLS"
 
 # Origin container series through mTLS
-ISTIO_ORIGIN=$(istio_prom_query 'count({origin_container=~".+"})' "origin_container via mTLS")
+ISTIO_ORIGIN=$(prom_query_to "$PF_ISTIO_OBSERVER_PORT" "$EVIDENCE_DIR/istio-observer-queries.txt" 'count({origin_container=~".+"})' "origin_container via mTLS")
 ISTIO_ORIGIN_VALUE=$(echo "$ISTIO_ORIGIN" | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "0")
 assert_gt "$ISTIO_ORIGIN_VALUE" "0" "Istio STRICT: origin_container series present via mTLS"
 
@@ -584,19 +558,6 @@ start_port_forward "$NAMESPACE" svc/observer-sd-prometheus "${PF_SD_OBSERVER_POR
 
 : > "$EVIDENCE_DIR/sd-observer-queries.txt"
 
-# Helper: query the SD observer
-sd_prom_query() {
-  local query="$1" desc="$2"
-  local result
-  result=$(curl -sf "http://localhost:${PF_SD_OBSERVER_PORT}/api/v1/query" \
-    --data-urlencode "query=$query" 2>/dev/null || echo '{"status":"error"}')
-  echo "--- $desc ---" >> "$EVIDENCE_DIR/sd-observer-queries.txt"
-  echo "query: $query" >> "$EVIDENCE_DIR/sd-observer-queries.txt"
-  echo "result: $result" >> "$EVIDENCE_DIR/sd-observer-queries.txt"
-  echo "" >> "$EVIDENCE_DIR/sd-observer-queries.txt"
-  echo "$result"
-}
-
 # Verify SD observer discovered targets
 TARGETS_RESULT=$(curl -sf "http://localhost:${PF_SD_OBSERVER_PORT}/api/v1/targets" \
   2>/dev/null || echo '{"status":"error"}')
@@ -612,17 +573,17 @@ AGG_DISCOVERED=$(echo "$TARGETS_RESULT" \
 assert_gt "$AGG_DISCOVERED" "0" "SD observer: discovered aggregator-sidecar-istio pod"
 
 # Verify up status
-SD_UP_RESULT=$(sd_prom_query 'up{pod="aggregator-sidecar-istio"}' "aggregator up via SD")
+SD_UP_RESULT=$(prom_query_to "$PF_SD_OBSERVER_PORT" "$EVIDENCE_DIR/sd-observer-queries.txt" 'up{pod="aggregator-sidecar-istio"}' "aggregator up via SD")
 SD_UP_VALUE=$(echo "$SD_UP_RESULT" | jq -r '.data.result[0].value[1] // "missing"' 2>/dev/null || echo "missing")
 assert_eq "$SD_UP_VALUE" "1" "SD observer: aggregator pod up == 1 via annotation discovery"
 
 # Verify origin_container series
-SD_ORIGIN=$(sd_prom_query 'count({origin_container=~".+"})' "origin_container via SD")
+SD_ORIGIN=$(prom_query_to "$PF_SD_OBSERVER_PORT" "$EVIDENCE_DIR/sd-observer-queries.txt" 'count({origin_container=~".+"})' "origin_container via SD")
 SD_ORIGIN_VALUE=$(echo "$SD_ORIGIN" | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "0")
 assert_gt "$SD_ORIGIN_VALUE" "0" "SD observer: origin_container series present via annotation discovery"
 
 # Verify specific app metrics are ingested
-SD_APP_A=$(sd_prom_query 'http_requests_total{origin_container="app-a"}' "app-a via SD")
+SD_APP_A=$(prom_query_to "$PF_SD_OBSERVER_PORT" "$EVIDENCE_DIR/sd-observer-queries.txt" 'http_requests_total{origin_container="app-a"}' "app-a via SD")
 SD_APP_A_LEN=$(echo "$SD_APP_A" | jq -r '.data.result | length' 2>/dev/null || echo "0")
 if [[ "$SD_APP_A_LEN" -gt 0 ]]; then
   pass "SD observer: app-a metrics ingested via annotation discovery"
