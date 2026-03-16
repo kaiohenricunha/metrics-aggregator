@@ -111,7 +111,5 @@ func formatLE(v float64) string {
 }
 
 func formatFloat(v float64) string {
-	s := fmt.Sprintf("%g", v)
-	// Ensure there's a decimal point for non-integer values that %g might format as int
-	return s
+	return fmt.Sprintf("%g", v)
 }

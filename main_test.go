@@ -558,6 +558,11 @@ func TestParseTraceparent(t *testing.T) {
 		{"uppercase hex rejected", "00-0AF7651916CD43DD8448EB211C80319C-B7AD6B7169203331-01", false, "", ""},
 		{"all-zero trace_id rejected", "00-00000000000000000000000000000000-b7ad6b7169203331-01", false, "", ""},
 		{"all-zero span_id rejected", "00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01", false, "", ""},
+		{"version ff rejected", "ff-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", false, "", ""},
+		{"bad version length", "000-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", false, "", ""},
+		{"uppercase version rejected", "0A-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", false, "", ""},
+		{"bad flags length", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-001", false, "", ""},
+		{"uppercase flags rejected", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-0F", false, "", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -119,12 +119,13 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, aggregator.ContextKeyRequestID, id)
 
 		// Parse W3C traceparent header: "00-<trace_id>-<span_id>-<flags>"
+		// Only enrich the logger and forward the header when the value is fully valid.
 		if tp := r.Header.Get("traceparent"); tp != "" {
 			if traceID, spanID, ok := parseTraceparent(tp); ok {
 				logger = logger.With().Str("trace_id", traceID).Str("span_id", spanID).Logger()
 				ctx = logger.WithContext(ctx)
+				ctx = context.WithValue(ctx, aggregator.ContextKeyTraceparent, tp)
 			}
-			ctx = context.WithValue(ctx, aggregator.ContextKeyTraceparent, tp)
 		}
 
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -133,10 +134,21 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 
 // parseTraceparent extracts trace_id and span_id from a W3C traceparent header.
 // Format: "version-trace_id-span_id-flags" (e.g. "00-<32hex>-<16hex>-01")
+// Validates all four fields per the W3C trace-context spec.
 func parseTraceparent(tp string) (traceID, spanID string, ok bool) {
 	parts := strings.Split(tp, "-")
 	if len(parts) != 4 {
 		return "", "", false
+	}
+	version, flags := parts[0], parts[3]
+	// version: 2 lowercase hex chars; "ff" is reserved/invalid
+	if len(version) != 2 || version == "ff" {
+		return "", "", false
+	}
+	for _, c := range version {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", "", false
+		}
 	}
 	traceID = parts[1]
 	spanID = parts[2]
@@ -156,6 +168,15 @@ func parseTraceparent(tp string) (traceID, spanID string, ok bool) {
 	// Reject all-zero IDs — invalid per W3C trace-context spec
 	if traceID == "00000000000000000000000000000000" || spanID == "0000000000000000" {
 		return "", "", false
+	}
+	// flags: 2 lowercase hex chars
+	if len(flags) != 2 {
+		return "", "", false
+	}
+	for _, c := range flags {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", "", false
+		}
 	}
 	return traceID, spanID, true
 }

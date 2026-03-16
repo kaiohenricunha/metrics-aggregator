@@ -9,7 +9,7 @@ groups:
         annotations:
           summary: "All scrape endpoints are down"
           description: "No configured endpoint has returned metrics for over 2 minutes."
-          runbook: "See runbook.md#MetricsAggregatorAllEndpointsDown"
+          runbook: "See runbook.md#metricsaggregatorallendpointsdown"
 
       - alert: MetricsAggregatorEndpointDown
         expr: metrics_aggregator_scrape_success == 0
@@ -19,7 +19,7 @@ groups:
         annotations:
           summary: "Scrape endpoint {{ $labels.endpoint }} is down"
           description: "Endpoint {{ $labels.endpoint }} has not returned metrics for 5 minutes."
-          runbook: "See runbook.md#MetricsAggregatorEndpointDown"
+          runbook: "See runbook.md#metricsaggregatorendpointdown"
 
       - alert: MetricsAggregatorHighErrorRate
         expr: rate(metrics_aggregator_scrape_errors_total[5m]) > 0.1
@@ -29,7 +29,7 @@ groups:
         annotations:
           summary: "High scrape error rate for endpoint {{ $labels.endpoint }}"
           description: "Endpoint {{ $labels.endpoint }} error rate exceeds 0.1/s for 5 minutes."
-          runbook: "See runbook.md#MetricsAggregatorHighErrorRate"
+          runbook: "See runbook.md#metricsaggregatorhigherrorrate"
 
       - alert: MetricsAggregatorSlowScrape
         expr: histogram_quantile(0.99, rate(metrics_aggregator_scrape_duration_seconds_bucket[5m])) > 5
@@ -39,7 +39,7 @@ groups:
         annotations:
           summary: "Slow scrape for endpoint {{ $labels.endpoint }}"
           description: "P99 scrape duration for {{ $labels.endpoint }} exceeds 5s."
-          runbook: "See runbook.md#MetricsAggregatorSlowScrape"
+          runbook: "See runbook.md#metricsaggregatorslowscrape"
 
       - alert: MetricsAggregatorHighInvalidSamples
         expr: metrics_aggregator_scrape_invalid_samples > 10
@@ -49,4 +49,4 @@ groups:
         annotations:
           summary: "High invalid sample count for endpoint {{ $labels.endpoint }}"
           description: "Endpoint {{ $labels.endpoint }} has more than 10 invalid samples."
-          runbook: "See runbook.md#MetricsAggregatorHighInvalidSamples"
+          runbook: "See runbook.md#metricsaggregatorhighinvalidsamples"

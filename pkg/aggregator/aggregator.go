@@ -21,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // centralised port definitions
@@ -212,8 +213,15 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 			if rid, ok := ctx.Value(ContextKeyRequestID).(string); ok && rid != "" {
 				req.Header.Set("X-Request-Id", rid)
 			}
-			if tp, ok := ctx.Value(ContextKeyTraceparent).(string); ok && tp != "" {
-				req.Header.Set("traceparent", tp)
+			// Inject the active scrape span context so targets receive the correct
+			// child span ID for distributed tracing. When tracing is disabled the
+			// propagator is a no-op, so fall back to forwarding the validated
+			// inbound traceparent for passive log correlation.
+			otel.GetTextMapPropagator().Inject(scrapeCtx, propagation.HeaderCarrier(req.Header))
+			if req.Header.Get("traceparent") == "" {
+				if tp, ok := ctx.Value(ContextKeyTraceparent).(string); ok && tp != "" {
+					req.Header.Set("traceparent", tp)
+				}
 			}
 
 			resp, err := a.client.Do(req)

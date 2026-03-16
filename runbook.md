@@ -136,5 +136,5 @@ histogram_quantile(0.99, rate(metrics_aggregator_http_request_duration_seconds_b
 
 ### Error Rate SLI (per-endpoint)
 ```promql
-rate(metrics_aggregator_scrape_errors_total[5m]) / rate(metrics_aggregator_requests_total[5m])
+rate(metrics_aggregator_scrape_errors_total[5m]) / rate(metrics_aggregator_scrape_duration_seconds_count[5m])
 ```
