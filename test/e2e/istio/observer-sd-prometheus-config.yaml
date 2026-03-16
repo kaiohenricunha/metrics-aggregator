@@ -1,0 +1,43 @@
+# Prometheus config using kubernetes_sd_configs to discover scrape targets
+# via prometheus.io/* annotations — mirrors production service discovery.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: observer-sd-prometheus-config
+  namespace: e2e-metrics-aggregator
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      scrape_timeout: 10s
+    scrape_configs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - e2e-metrics-aggregator
+        relabel_configs:
+          # Only scrape pods with prometheus.io/scrape=true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          # Use pod_ip:prometheus.io/port as target address
+          - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: (.+);(.+)
+            replacement: ${1}:${2}
+          # Use prometheus.io/path for metrics path
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          # Add pod name label for identification
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+          # Add namespace label
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
