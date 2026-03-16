@@ -1,0 +1,96 @@
+# Production-style Deployment with the aggregator as a sidecar.
+#
+# Uses pod annotations for Prometheus discovery — no Service required
+# for metrics scraping (you may still have a Service for app traffic).
+#
+# Usage:
+#   kubectl apply -f deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  labels:
+    app: my-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        # ── Aggregator sidecar ─────────────────────────────
+        - name: metrics-aggregator
+          image: ghcr.io/kaiohenricunha/metrics-aggregator:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: METRICS_ENDPOINTS
+              value: '{"web":"http://localhost:8080/metrics","cache":"http://localhost:9100/metrics"}'
+            - name: LOG_LEVEL
+              value: info
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+
+        # ── Application containers ─────────────────────────
+        - name: web
+          image: my-registry/web-app:v3.0.0
+          ports:
+            - containerPort: 8080
+              name: http
+          # Exposes Prometheus metrics on :8080/metrics
+
+        - name: cache
+          image: my-registry/cache-proxy:v1.2.0
+          ports:
+            - containerPort: 9100
+              name: cache-metrics
+          # Exposes Prometheus metrics on :9100/metrics
+---
+# Service for application traffic (NOT required by the aggregator).
+# Prometheus discovers pods directly via annotations.
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app
+spec:
+  selector:
+    app: my-app
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http

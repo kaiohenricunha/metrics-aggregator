@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository is a small Go service that merges Prometheus metrics from multiple endpoints into one `/metrics` output. Entry point code lives in `main.go` (server startup, request ID middleware, graceful shutdown) with integration tests in `main_test.go`. Core aggregation logic lives in `pkg/aggregator/` — the `Aggregator` struct (constructed via `NewAggregator(config)`) holds endpoints, HTTP client, logger, and atomic request/error counters with no global mutable state. Container and local demo assets are at the repo root: `Dockerfile`, `docker-compose.yaml`, `prometheus1.yml`, and `prometheus2.yml`. CI and release automation live under `.github/workflows/`.
+This repository is a small Go service that merges Prometheus metrics from multiple endpoints into one `/metrics` output. Entry point code lives in `main.go` (server startup, request ID middleware, graceful shutdown) with integration tests in `main_test.go`. Core aggregation logic lives in `pkg/aggregator/` — the `Aggregator` struct (constructed via `NewAggregator(config)`) holds endpoints, HTTP client, logger, and atomic request/error counters with no global mutable state. Container and local demo assets are at the repo root: `Dockerfile`, `docker-compose.yaml`, `prometheus1.yml`, and `prometheus2.yml`. CI and release automation live under `.github/workflows/`. Deployment examples live in `examples/` — Kubernetes manifests (basic pod, Deployment, PodMonitor, service discovery), Helm integration, Kustomize overlays, and Docker Compose.
 
 ## Go Toolchain (gvm)
 
@@ -45,7 +45,6 @@ Claude Code users may also invoke `/check`, `/lint`, `/smoke`, `/cover`, and `/t
 - `make e2e`: full run — create kind cluster → deploy sidecar pod → assert → Istio mTLS → teardown (~8-10 min). `promtool` and `istioctl` are auto-installed if missing.
 - `make e2e-up`: create kind cluster + build/load image only (no tests). Use for manifest validation: `kubectl apply --dry-run=server -f test/e2e/manifests/`.
 - `make e2e-keep`: full run but keep cluster alive for `kubectl` inspection.
-- `make e2e-istio`: (deprecated) alias for `make e2e` — Istio is now always included.
 - `make e2e-clean`: delete the kind cluster.
 
 ## Coding Style & Naming Conventions
@@ -69,6 +68,19 @@ Key files:
 
 ## Commit & Pull Request Guidelines
 Prefer Conventional Commit style because releases are automated from `main` via semantic release. Follow patterns already in history such as `chore(ci): ...`, `ci(trivy): ...`, `feat: ...`, or `fix: ...`. PRs should include a short summary, linked issue if applicable, test evidence (`go test`, coverage, or `docker compose` smoke output), and sample metric output when `/metrics` behavior changes.
+
+## Working Style
+
+- **Prefer targeted action over exploration.** This is a small, focused Go project (~1,750 lines across 7 files). Go directly to the relevant file rather than surveying the whole codebase first.
+- **Commits should be surgical.** Verify with `git diff --staged` that only relevant files are included. Do not bundle unrelated formatting or refactoring.
+- **One concern per commit.** Follow Conventional Commits style.
+
+## Verification Discipline
+
+- After implementing a fix, **run the relevant test(s)** before reporting success.
+- After editing `.go` files, confirm `go vet ./...` passes.
+- Before opening a PR, run `make check`. All three static analysis tools must pass.
+- When fixing a CI failure, reproduce locally first, then verify end-to-end before pushing.
 
 ## Configuration & Ops Notes
 `METRICS_ENDPOINTS` is required and may be passed as a JSON map or comma-separated list. Keep Docker and workflow changes aligned with the ports and env vars used by `docker-compose.yaml` and the compose smoke test.
