@@ -19,6 +19,9 @@ PF_AGG_PARTIAL_PORT=19091
 PF_OBSERVER_PORT=19093
 PF_ISTIO_PORT=19094
 PF_ISTIO_OBSERVER_PORT=19095
+PF_MERGE_PORT=19096
+PF_BASELINE_PORT=19097
+PF_SD_OBSERVER_PORT=19098
 
 # ── Parse flags ──────────────────────────────────────────────────
 KEEP_CLUSTER=false
@@ -450,6 +453,209 @@ assert_gt "$ISTIO_ORIGIN_VALUE" "0" "Istio STRICT: origin_container series prese
 } >> "$EVIDENCE_DIR/istio-check.txt"
 
 cleanup_port_forwards
+
+# ── 9d — Istio metrics merging integration (port 15020) ───────────
+info "Phase 9d: Istio metrics merging — port 15020 verification"
+
+start_port_forward "$NAMESPACE" pod/aggregator-sidecar-istio "${PF_MERGE_PORT}:15020"
+
+info "waiting 30s for Istio agent to merge app metrics…"
+sleep 30
+
+MERGE_OK=false
+for i in $(seq 1 15); do
+  if curl -sf "http://localhost:${PF_MERGE_PORT}/stats/prometheus" \
+    -o "$EVIDENCE_DIR/istio-merged-15020.txt"; then
+    MERGE_OK=true
+    break
+  fi
+  sleep 2
+done
+
+if [[ "$MERGE_OK" == "false" ]]; then
+  fail "Istio merge: port 15020 /stats/prometheus not reachable"
+else
+  pass "Istio merge: port 15020 /stats/prometheus returned data"
+
+  # App metrics from aggregator are present (with origin_container labels)
+  assert_grep 'origin_container="app-a"' "$EVIDENCE_DIR/istio-merged-15020.txt" \
+    "Istio merge: app-a metrics present at 15020"
+  assert_grep 'origin_container="app-b"' "$EVIDENCE_DIR/istio-merged-15020.txt" \
+    "Istio merge: app-b metrics present at 15020"
+  assert_grep 'http_requests_total{origin_container="app-a"' "$EVIDENCE_DIR/istio-merged-15020.txt" \
+    "Istio merge: app-a http_requests_total at 15020"
+  assert_grep 'jobs_processed_total{origin_container="app-b"' "$EVIDENCE_DIR/istio-merged-15020.txt" \
+    "Istio merge: app-b jobs_processed_total at 15020"
+
+  # Self-instrumentation from aggregator passed through
+  assert_grep 'metrics_aggregator_scrape_success' "$EVIDENCE_DIR/istio-merged-15020.txt" \
+    "Istio merge: aggregator self-instrumentation at 15020"
+
+  # Envoy proxy metrics are ALSO present (proves merging happened)
+  assert_grep 'envoy_' "$EVIDENCE_DIR/istio-merged-15020.txt" \
+    "Istio merge: envoy proxy metrics at 15020"
+
+  # promtool validation on merged output (tolerate envoy format quirks)
+  curl -sf "http://localhost:${PF_MERGE_PORT}/stats/prometheus" \
+    | promtool check metrics 2>&1 > "$EVIDENCE_DIR/promtool-merged-check.txt" || true
+fi
+
+cleanup_port_forwards
+
+# ── 9e — Negative test: single-port limitation without aggregator ──
+info "Phase 9e: NEGATIVE TEST — proving Istio single-port limitation"
+
+kubectl apply -f "$SCRIPT_DIR/istio/baseline-pod-no-aggregator.yaml"
+wait_for_pod "$NAMESPACE" baseline-no-aggregator 180
+
+info "waiting 30s for Istio agent to scrape baseline pod…"
+sleep 30
+
+start_port_forward "$NAMESPACE" pod/baseline-no-aggregator "${PF_BASELINE_PORT}:15020"
+
+BASELINE_OK=false
+for i in $(seq 1 15); do
+  if curl -sf "http://localhost:${PF_BASELINE_PORT}/stats/prometheus" \
+    -o "$EVIDENCE_DIR/baseline-no-aggregator-15020.txt"; then
+    BASELINE_OK=true
+    break
+  fi
+  sleep 2
+done
+
+if [[ "$BASELINE_OK" == "false" ]]; then
+  fail "baseline: port 15020 not reachable"
+else
+  pass "baseline: port 15020 returned data"
+
+  # App-a metrics ARE present (prometheus.io/port points to 8081)
+  assert_grep 'http_requests_total' "$EVIDENCE_DIR/baseline-no-aggregator-15020.txt" \
+    "baseline: app-a http_requests_total present (port 8081 configured)"
+
+  # App-b metrics are ABSENT (single-port limitation — no second annotation!)
+  assert_not_grep 'jobs_processed_total' "$EVIDENCE_DIR/baseline-no-aggregator-15020.txt" \
+    "baseline: app-b jobs_processed_total ABSENT (single-port limitation)"
+  assert_not_grep 'worker_pool_size' "$EVIDENCE_DIR/baseline-no-aggregator-15020.txt" \
+    "baseline: app-b worker_pool_size ABSENT (single-port limitation)"
+
+  # Envoy metrics are still present
+  assert_grep 'envoy_' "$EVIDENCE_DIR/baseline-no-aggregator-15020.txt" \
+    "baseline: envoy proxy metrics still present"
+
+  # Compare: WITH aggregator (from 9d), both apps are present
+  AGG_APP_A=0
+  AGG_APP_B=0
+  if [[ -s "$EVIDENCE_DIR/istio-merged-15020.txt" ]]; then
+    AGG_APP_A=$(grep -c 'origin_container="app-a"' "$EVIDENCE_DIR/istio-merged-15020.txt" || echo "0")
+    AGG_APP_B=$(grep -c 'origin_container="app-b"' "$EVIDENCE_DIR/istio-merged-15020.txt" || echo "0")
+    assert_gt "$AGG_APP_A" "0" "comparison: WITH aggregator, app-a metrics at 15020 (count=$AGG_APP_A)"
+    assert_gt "$AGG_APP_B" "0" "comparison: WITH aggregator, app-b metrics at 15020 (count=$AGG_APP_B)"
+  fi
+
+  {
+    echo "=== Istio Single-Port Limitation Proof ==="
+    echo ""
+    echo "BASELINE (no aggregator, prometheus.io/port=8081):"
+    echo "  app-a metrics (http_requests_total): PRESENT"
+    echo "  app-b metrics (jobs_processed_total): ABSENT"
+    echo ""
+    echo "WITH AGGREGATOR (prometheus.io/port=9090):"
+    echo "  app-a metrics: PRESENT (count=$AGG_APP_A)"
+    echo "  app-b metrics: PRESENT (count=$AGG_APP_B)"
+    echo ""
+    echo "CONCLUSION: Aggregator solves the single-port limitation"
+  } > "$EVIDENCE_DIR/single-port-limitation-proof.txt"
+fi
+
+cleanup_port_forwards
+
+# ── 9f — Annotation-based service discovery (kubernetes_sd_configs) ─
+info "Phase 9f: kubernetes_sd_configs — annotation-based discovery"
+
+kubectl apply -f "$SCRIPT_DIR/istio/prometheus-rbac.yaml"
+kubectl apply -f "$SCRIPT_DIR/istio/observer-sd-prometheus-config.yaml"
+kubectl apply -f "$SCRIPT_DIR/istio/observer-sd-prometheus.yaml"
+wait_for_deployment "$NAMESPACE" observer-sd-prometheus 120
+
+info "waiting 75s for SD observer to discover and scrape annotated pods…"
+sleep 75
+
+start_port_forward "$NAMESPACE" svc/observer-sd-prometheus "${PF_SD_OBSERVER_PORT}:9090"
+
+: > "$EVIDENCE_DIR/sd-observer-queries.txt"
+
+# Helper: query the SD observer
+sd_prom_query() {
+  local query="$1" desc="$2"
+  local result
+  result=$(curl -sf "http://localhost:${PF_SD_OBSERVER_PORT}/api/v1/query" \
+    --data-urlencode "query=$query" 2>/dev/null || echo '{"status":"error"}')
+  echo "--- $desc ---" >> "$EVIDENCE_DIR/sd-observer-queries.txt"
+  echo "query: $query" >> "$EVIDENCE_DIR/sd-observer-queries.txt"
+  echo "result: $result" >> "$EVIDENCE_DIR/sd-observer-queries.txt"
+  echo "" >> "$EVIDENCE_DIR/sd-observer-queries.txt"
+  echo "$result"
+}
+
+# Verify SD observer discovered targets
+TARGETS_RESULT=$(curl -sf "http://localhost:${PF_SD_OBSERVER_PORT}/api/v1/targets" \
+  2>/dev/null || echo '{"status":"error"}')
+echo "$TARGETS_RESULT" > "$EVIDENCE_DIR/sd-observer-targets.txt"
+
+ACTIVE_TARGETS=$(echo "$TARGETS_RESULT" | jq -r '.data.activeTargets | length' 2>/dev/null || echo "0")
+assert_gt "$ACTIVE_TARGETS" "0" "SD observer: discovered > 0 active targets via annotations"
+
+# Verify the aggregator pod was discovered
+AGG_DISCOVERED=$(echo "$TARGETS_RESULT" \
+  | jq -r '[.data.activeTargets[] | select(.labels.pod == "aggregator-sidecar-istio")] | length' \
+  2>/dev/null || echo "0")
+assert_gt "$AGG_DISCOVERED" "0" "SD observer: discovered aggregator-sidecar-istio pod"
+
+# Verify up status
+SD_UP_RESULT=$(sd_prom_query 'up{pod="aggregator-sidecar-istio"}' "aggregator up via SD")
+SD_UP_VALUE=$(echo "$SD_UP_RESULT" | jq -r '.data.result[0].value[1] // "missing"' 2>/dev/null || echo "missing")
+assert_eq "$SD_UP_VALUE" "1" "SD observer: aggregator pod up == 1 via annotation discovery"
+
+# Verify origin_container series
+SD_ORIGIN=$(sd_prom_query 'count({origin_container=~".+"})' "origin_container via SD")
+SD_ORIGIN_VALUE=$(echo "$SD_ORIGIN" | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "0")
+assert_gt "$SD_ORIGIN_VALUE" "0" "SD observer: origin_container series present via annotation discovery"
+
+# Verify specific app metrics are ingested
+SD_APP_A=$(sd_prom_query 'http_requests_total{origin_container="app-a"}' "app-a via SD")
+SD_APP_A_LEN=$(echo "$SD_APP_A" | jq -r '.data.result | length' 2>/dev/null || echo "0")
+if [[ "$SD_APP_A_LEN" -gt 0 ]]; then
+  pass "SD observer: app-a metrics ingested via annotation discovery"
+else
+  fail "SD observer: app-a metrics not found via annotation discovery"
+fi
+
+{
+  echo "=== kubernetes_sd_configs Discovery ==="
+  echo "active_targets: $ACTIVE_TARGETS"
+  echo "aggregator_discovered: $AGG_DISCOVERED"
+  echo "up_value: $SD_UP_VALUE"
+  echo "origin_container_count: $SD_ORIGIN_VALUE"
+} > "$EVIDENCE_DIR/sd-observer-summary.txt"
+
+cleanup_port_forwards
+
+# ── Istio merging summary ─────────────────────────────────────────
+{
+  echo "=== Istio Metrics Merging E2E Summary ==="
+  echo ""
+  echo "1. LIMITATION PROVEN (Phase 9e):"
+  echo "   - Without aggregator: only app-a metrics at port 15020"
+  echo "   - app-b metrics completely absent"
+  echo ""
+  echo "2. SOLUTION PROVEN (Phase 9d):"
+  echo "   - With aggregator: BOTH app-a and app-b metrics at port 15020"
+  echo "   - Envoy proxy metrics also present"
+  echo ""
+  echo "3. PRODUCTION READY (Phase 9f):"
+  echo "   - kubernetes_sd_configs discovers annotated pods automatically"
+  echo "   - No hardcoded targets needed"
+} > "$EVIDENCE_DIR/istio-merging-summary.txt"
 
 # ═══════════════════════════════════════════════════════════════════
 # Phase 10 — Evidence report

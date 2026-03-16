@@ -1,0 +1,48 @@
+# Baseline pod WITHOUT the metrics-aggregator sidecar.
+# Proves the Istio single-port limitation: prometheus.io/port can only
+# point to ONE container's metrics port, so app-b is invisible at 15020.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: baseline-no-aggregator
+  namespace: e2e-metrics-aggregator
+  labels:
+    app: baseline-no-aggregator
+  annotations:
+    sidecar.istio.io/inject: "true"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8081"
+    prometheus.io/path: "/metrics"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app-a
+      image: nginx:alpine
+      ports:
+        - containerPort: 8081
+      volumeMounts:
+        - name: app-a-metrics
+          mountPath: /usr/share/nginx/metrics
+        - name: app-nginx-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: app-a.conf
+    - name: app-b
+      image: nginx:alpine
+      ports:
+        - containerPort: 8082
+      volumeMounts:
+        - name: app-b-metrics
+          mountPath: /usr/share/nginx/metrics
+        - name: app-nginx-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: app-b.conf
+  volumes:
+    - name: app-a-metrics
+      configMap:
+        name: app-a-metrics
+    - name: app-b-metrics
+      configMap:
+        name: app-b-metrics
+    - name: app-nginx-config
+      configMap:
+        name: app-nginx-config

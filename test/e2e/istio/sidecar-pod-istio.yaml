@@ -7,6 +7,9 @@ metadata:
     app: aggregator-sidecar-istio
   annotations:
     sidecar.istio.io/inject: "true"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
 spec:
   restartPolicy: Never
   containers:

@@ -1,0 +1,29 @@
+# RBAC for Prometheus kubernetes_sd_configs — allows the SD observer
+# to discover pods by prometheus.io/* annotations.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-sd
+  namespace: e2e-metrics-aggregator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-sd-e2e
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-sd-e2e
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-sd-e2e
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-sd
+    namespace: e2e-metrics-aggregator
