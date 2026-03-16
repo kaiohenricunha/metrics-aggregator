@@ -15,6 +15,10 @@ import (
 	"time"
 
 	"github.com/kaiohenricunha/metrics-aggregator/pkg/aggregator"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // freePort returns an available TCP port.
@@ -383,5 +387,267 @@ func TestStatusRecorder_TracksBytesOnErrorResponses(t *testing.T) {
 	}
 	if rec.bytes == 0 {
 		t.Fatal("expected statusRecorder to track bytes written by http.Error")
+	}
+}
+
+func TestMetricsHandler_HTTPRequestDurationHistogram(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "0s")
+	t.Setenv("METRICS_MAX_INFLIGHT", "32")
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	for range 3 {
+		resp, err := http.Get("http://" + addr + "/metrics")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	output := string(body)
+
+	if !strings.Contains(output, "# TYPE metrics_aggregator_http_request_duration_seconds histogram") {
+		t.Fatalf("missing histogram TYPE line in:\n%s", output)
+	}
+	if !strings.Contains(output, `metrics_aggregator_http_request_duration_seconds_bucket{le="+Inf"}`) {
+		t.Fatalf("missing +Inf bucket in:\n%s", output)
+	}
+	if !strings.Contains(output, "metrics_aggregator_http_request_duration_seconds_sum") {
+		t.Fatalf("missing _sum in:\n%s", output)
+	}
+	if !strings.Contains(output, "metrics_aggregator_http_request_duration_seconds_count") {
+		t.Fatalf("missing _count in:\n%s", output)
+	}
+}
+
+func TestMetricsHandler_HTTPRequestDurationHistogram_IncludesRejected(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "0s")
+	t.Setenv("METRICS_MAX_INFLIGHT", "1")
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	// First request holds the inflight slot
+	go func() {
+		http.Get("http://" + addr + "/metrics")
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	// Second request should be rejected (503)
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", resp.StatusCode)
+	}
+
+	// Wait for first request to complete, then fetch metrics to check histogram
+	time.Sleep(400 * time.Millisecond)
+	resp, err = http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	// The histogram should have counted both requests (success + rejected)
+	if !strings.Contains(string(body), "metrics_aggregator_http_request_duration_seconds_count") {
+		t.Fatalf("missing histogram _count in:\n%s", string(body))
+	}
+}
+
+func TestRequestIDMiddleware_ParsesTraceparent(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	req, _ := http.NewRequest("GET", "http://"+addr+"/metrics", nil)
+	req.Header.Set("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	// If no panic occurred and response is OK, the parsing succeeded
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestRequestIDMiddleware_NoTraceFieldsWithoutTraceparent(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestRequestIDMiddleware_InvalidTraceparentIgnored(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	req, _ := http.NewRequest("GET", "http://"+addr+"/metrics", nil)
+	req.Header.Set("traceparent", "malformed-garbage")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 even with invalid traceparent, got %d", resp.StatusCode)
+	}
+}
+
+func TestParseTraceparent(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantOK  bool
+		traceID string
+		spanID  string
+	}{
+		{"valid", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", true, "0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331"},
+		{"too few parts", "00-abc-01", false, "", ""},
+		{"bad trace_id length", "00-0af765-b7ad6b7169203331-01", false, "", ""},
+		{"bad span_id length", "00-0af7651916cd43dd8448eb211c80319c-b7ad-01", false, "", ""},
+		{"uppercase hex rejected", "00-0AF7651916CD43DD8448EB211C80319C-B7AD6B7169203331-01", false, "", ""},
+		{"all-zero trace_id rejected", "00-00000000000000000000000000000000-b7ad6b7169203331-01", false, "", ""},
+		{"all-zero span_id rejected", "00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01", false, "", ""},
+		{"version ff rejected", "ff-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", false, "", ""},
+		{"bad version length", "000-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", false, "", ""},
+		{"uppercase version rejected", "0A-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", false, "", ""},
+		{"bad flags length", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-001", false, "", ""},
+		{"uppercase flags rejected", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-0F", false, "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			traceID, spanID, ok := parseTraceparent(tc.input)
+			if ok != tc.wantOK {
+				t.Fatalf("parseTraceparent(%q): ok=%v, want %v", tc.input, ok, tc.wantOK)
+			}
+			if ok {
+				if traceID != tc.traceID {
+					t.Errorf("traceID=%q, want %q", traceID, tc.traceID)
+				}
+				if spanID != tc.spanID {
+					t.Errorf("spanID=%q, want %q", spanID, tc.spanID)
+				}
+			}
+		})
+	}
+}
+
+func setupTestTracing(t *testing.T) *tracetest.InMemoryExporter {
+	t.Helper()
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	original := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		tp.Shutdown(context.Background())
+		otel.SetTracerProvider(original)
+	})
+	return exporter
+}
+
+func TestTracingMiddleware_CreatesSpan(t *testing.T) {
+	exporter := setupTestTracing(t)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "0s")
+	t.Setenv("METRICS_MAX_INFLIGHT", "32")
+
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	spans := exporter.GetSpans()
+	found := false
+	for _, s := range spans {
+		if s.Name == "GET /metrics" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected span named 'GET /metrics', got %d spans", len(spans))
+	}
+}
+
+func TestTracingMiddleware_NoopWhenDisabled(t *testing.T) {
+	// Don't set up any TracerProvider — use default no-op
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "0s")
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 }

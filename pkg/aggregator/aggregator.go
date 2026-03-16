@@ -18,6 +18,10 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // centralised port definitions
@@ -37,6 +41,15 @@ var (
 	originLabelKey = regexp.MustCompile(`[{,]\s*origin_container\s*=`)
 )
 
+type contextKey int
+
+const (
+	// ContextKeyRequestID carries the X-Request-Id value for forwarding to scrape targets.
+	ContextKeyRequestID contextKey = iota
+	// ContextKeyTraceparent carries the traceparent header value for forwarding.
+	ContextKeyTraceparent
+)
+
 // Endpoint represents a Prometheus /metrics endpoint.
 type Endpoint struct {
 	Name string
@@ -52,11 +65,13 @@ type scrapeResult struct {
 
 // Aggregator scrapes and merges Prometheus metrics from multiple endpoints.
 type Aggregator struct {
-	endpoints     []Endpoint
-	client        *http.Client
-	logger        zerolog.Logger
-	requestsTotal atomic.Int64
-	errorsTotal   atomic.Int64
+	endpoints          []Endpoint
+	client             *http.Client
+	logger             zerolog.Logger
+	requestsTotal      atomic.Int64
+	errorsTotal        atomic.Int64
+	scrapeErrors       []atomic.Int64
+	scrapeDurationHist map[string]*Histogram
 }
 
 // NewAggregator parses endpointsConfig (JSON map or comma-separated URLs)
@@ -116,10 +131,17 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 		}
 	}
 
+	scrapeDurationHist := make(map[string]*Histogram, len(parsed))
+	for _, ep := range parsed {
+		scrapeDurationHist[ep.Name] = NewHistogram(DefaultBuckets())
+	}
+
 	agg := &Aggregator{
-		endpoints: parsed,
-		client:    client,
-		logger:    log.Logger,
+		endpoints:          parsed,
+		client:             client,
+		logger:             log.Logger,
+		scrapeErrors:       make([]atomic.Int64, len(parsed)),
+		scrapeDurationHist: scrapeDurationHist,
 	}
 
 	agg.logger.Info().Msg("aggregating metrics from configured endpoints")
@@ -163,24 +185,55 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 		wg.Add(1)
 		go func(idx int, ep Endpoint) {
 			defer wg.Done()
+			scrapeCtx, span := otel.Tracer("metrics-aggregator").Start(ctx, "scrape "+ep.Name)
+			span.SetAttributes(attribute.String("endpoint.name", ep.Name))
+			defer span.End()
+
 			start := time.Now()
 			sanitizedURL := sanitizeURLForLog(ep.URL)
+			failed := true
+			defer func() {
+				dur := time.Since(start)
+				a.scrapeDurationHist[ep.Name].Observe(dur.Seconds())
+				if failed {
+					a.scrapeErrors[idx].Add(1)
+					span.SetStatus(otelcodes.Error, "scrape failed")
+				} else {
+					span.SetStatus(otelcodes.Ok, "")
+				}
+			}()
 
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.URL, nil)
+			req, err := http.NewRequestWithContext(scrapeCtx, http.MethodGet, ep.URL, nil)
 			if err != nil {
 				logger.Error().Err(err).Str("url", sanitizedURL).Msg("request creation failed")
+				span.RecordError(err)
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
+			}
+			if rid, ok := ctx.Value(ContextKeyRequestID).(string); ok && rid != "" {
+				req.Header.Set("X-Request-Id", rid)
+			}
+			// Inject the active scrape span context so targets receive the correct
+			// child span ID for distributed tracing. When tracing is disabled the
+			// propagator is a no-op, so fall back to forwarding the validated
+			// inbound traceparent for passive log correlation.
+			otel.GetTextMapPropagator().Inject(scrapeCtx, propagation.HeaderCarrier(req.Header))
+			if req.Header.Get("traceparent") == "" {
+				if tp, ok := ctx.Value(ContextKeyTraceparent).(string); ok && tp != "" {
+					req.Header.Set("traceparent", tp)
+				}
 			}
 
 			resp, err := a.client.Do(req)
 			if err != nil {
 				logger.Error().Err(err).Str("url", sanitizedURL).Msg("HTTP GET failed")
+				span.RecordError(err)
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
 			if resp.StatusCode != http.StatusOK {
 				logger.Warn().Int("status_code", resp.StatusCode).Str("url", sanitizedURL).Msg("non-200 response")
+				span.RecordError(fmt.Errorf("non-200 status: %d", resp.StatusCode))
 				resp.Body.Close()
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
@@ -190,6 +243,7 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 			resp.Body.Close()
 			if err != nil {
 				logger.Error().Err(err).Str("url", sanitizedURL).Msg("read body failed")
+				span.RecordError(err)
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
@@ -224,6 +278,7 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 					Int("dropped_samples", invalidSamples).
 					Msg("dropped invalid scrape samples")
 			}
+			failed = len(lines) == 0
 			results[idx] = scrapeResult{
 				lines:          lines,
 				success:        len(lines) > 0,
@@ -254,12 +309,16 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 		}
 		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_success{endpoint=%q} %d", ep.Name, val))
 	}
+	merged = append(merged, RenderHeader("metrics_aggregator_scrape_duration_seconds", "Duration of endpoint scrapes in seconds."))
+	for _, ep := range a.endpoints {
+		merged = append(merged, RenderSamples("metrics_aggregator_scrape_duration_seconds", fmt.Sprintf("endpoint=%q", ep.Name), a.scrapeDurationHist[ep.Name]))
+	}
 	merged = append(merged,
-		"# HELP metrics_aggregator_scrape_duration_seconds Duration of the last scrape in seconds.",
-		"# TYPE metrics_aggregator_scrape_duration_seconds gauge",
+		"# HELP metrics_aggregator_scrape_errors_total Total number of failed scrapes per endpoint.",
+		"# TYPE metrics_aggregator_scrape_errors_total counter",
 	)
 	for i, ep := range a.endpoints {
-		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_duration_seconds{endpoint=%q} %.3f", ep.Name, results[i].duration.Seconds()))
+		merged = append(merged, fmt.Sprintf("metrics_aggregator_scrape_errors_total{endpoint=%q} %d", ep.Name, a.scrapeErrors[i].Load()))
 	}
 	merged = append(merged,
 		"# HELP metrics_aggregator_scrape_invalid_samples Number of invalid scrape samples dropped from the last scrape.",

@@ -30,3 +30,13 @@ services:
       - PROM_PORT=${PROM_PORT}
     volumes:
       - ./prometheus2.yml:/etc/prometheus/prometheus.yml
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.66
+    profiles:
+      - tracing
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true

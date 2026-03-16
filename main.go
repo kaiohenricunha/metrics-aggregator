@@ -18,8 +18,13 @@ import (
 	"time"
 
 	"github.com/kaiohenricunha/metrics-aggregator/pkg/aggregator"
+	"github.com/kaiohenricunha/metrics-aggregator/pkg/tracing"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 const (
@@ -100,6 +105,7 @@ func generateRequestID() string {
 }
 
 // requestIDMiddleware injects a request ID into the response and logger context.
+// It also parses the W3C traceparent header for log correlation and downstream forwarding.
 func requestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-Id")
@@ -110,8 +116,69 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 
 		logger := log.With().Str("request_id", id).Logger()
 		ctx := logger.WithContext(r.Context())
+		ctx = context.WithValue(ctx, aggregator.ContextKeyRequestID, id)
+
+		// Parse W3C traceparent header: "00-<trace_id>-<span_id>-<flags>"
+		// Only enrich the logger and forward the header when the value is fully valid.
+		if tp := r.Header.Get("traceparent"); tp != "" {
+			if traceID, spanID, ok := parseTraceparent(tp); ok {
+				logger = logger.With().Str("trace_id", traceID).Str("span_id", spanID).Logger()
+				ctx = logger.WithContext(ctx)
+				ctx = context.WithValue(ctx, aggregator.ContextKeyTraceparent, tp)
+			}
+		}
+
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// parseTraceparent extracts trace_id and span_id from a W3C traceparent header.
+// Format: "version-trace_id-span_id-flags" (e.g. "00-<32hex>-<16hex>-01")
+// Validates all four fields per the W3C trace-context spec.
+func parseTraceparent(tp string) (traceID, spanID string, ok bool) {
+	parts := strings.Split(tp, "-")
+	if len(parts) != 4 {
+		return "", "", false
+	}
+	version, flags := parts[0], parts[3]
+	// version: 2 lowercase hex chars; "ff" is reserved/invalid
+	if len(version) != 2 || version == "ff" {
+		return "", "", false
+	}
+	for _, c := range version {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", "", false
+		}
+	}
+	traceID = parts[1]
+	spanID = parts[2]
+	if len(traceID) != 32 || len(spanID) != 16 {
+		return "", "", false
+	}
+	for _, c := range traceID {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", "", false
+		}
+	}
+	for _, c := range spanID {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", "", false
+		}
+	}
+	// Reject all-zero IDs — invalid per W3C trace-context spec
+	if traceID == "00000000000000000000000000000000" || spanID == "0000000000000000" {
+		return "", "", false
+	}
+	// flags: 2 lowercase hex chars
+	if len(flags) != 2 {
+		return "", "", false
+	}
+	for _, c := range flags {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", "", false
+		}
+	}
+	return traceID, spanID, true
 }
 
 func (c *metricsCache) getOrFetch(ctx context.Context, fetch func(context.Context) (string, error)) (string, error) {
@@ -160,10 +227,12 @@ func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.H
 	cache := &metricsCache{ttl: cfg.cacheTTL}
 	inflightLimiter := make(chan struct{}, cfg.maxInflight)
 	var httpRequests atomic.Int64
+	httpDurationHist := aggregator.NewHistogram(aggregator.DefaultBuckets())
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		httpRequests.Add(1)
 		start := time.Now()
+		defer func() { httpDurationHist.Observe(time.Since(start).Seconds()) }()
 		logger := zerolog.Ctx(r.Context())
 
 		w.Header().Set("Content-Type", "text/plain")
@@ -200,13 +269,15 @@ func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.H
 			return
 		}
 
-		// Append HTTP-level request counter (increments on every request, including cache hits)
+		// Append HTTP-level metrics (increment on every request, including cache hits)
 		metrics += fmt.Sprintf(
 			"# HELP metrics_aggregator_http_requests_total Total number of HTTP requests to the /metrics endpoint.\n"+
 				"# TYPE metrics_aggregator_http_requests_total counter\n"+
 				"metrics_aggregator_http_requests_total %d\n",
 			httpRequests.Load(),
 		)
+		metrics += aggregator.RenderHeader("metrics_aggregator_http_request_duration_seconds", "Duration of HTTP requests to the /metrics endpoint in seconds.") + "\n"
+		metrics += aggregator.RenderSamples("metrics_aggregator_http_request_duration_seconds", "", httpDurationHist) + "\n"
 
 		_, _ = fmt.Fprint(rec, metrics)
 		logger.Info().
@@ -257,6 +328,27 @@ func loadHTTPServerConfigFromEnv() httpServerConfig {
 	}
 }
 
+// tracingMiddleware extracts inbound W3C trace context and creates a span for each request.
+func tracingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		tracer := otel.Tracer("metrics-aggregator")
+		ctx, span := tracer.Start(ctx, r.Method+" "+r.URL.Path)
+		defer span.End()
+
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r.WithContext(ctx))
+
+		span.SetAttributes(
+			attribute.String("http.method", r.Method),
+			attribute.Int("http.status_code", rec.status),
+		)
+		if rec.status >= 400 {
+			span.SetStatus(codes.Error, http.StatusText(rec.status))
+		}
+	})
+}
+
 func run(ctx context.Context, agg *aggregator.Aggregator, addr string) error {
 	cfg := loadHTTPServerConfigFromEnv()
 	mux := http.NewServeMux()
@@ -265,7 +357,7 @@ func run(ctx context.Context, agg *aggregator.Aggregator, addr string) error {
 	})
 	mux.HandleFunc("/metrics", makeMetricsHandler(agg, cfg))
 
-	handler := requestIDMiddleware(mux)
+	handler := requestIDMiddleware(tracingMiddleware(mux))
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
@@ -291,6 +383,16 @@ func run(ctx context.Context, agg *aggregator.Aggregator, addr string) error {
 }
 
 func main() {
+	shutdownTracing, err := tracing.InitTracing("metrics-aggregator")
+	if err != nil {
+		log.Fatal().Err(err).Msg("tracing setup failed")
+	}
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			log.Error().Err(err).Msg("tracing shutdown error")
+		}
+	}()
+
 	agg, err := aggregator.NewAggregator(os.Getenv("METRICS_ENDPOINTS"))
 	if err != nil {
 		log.Fatal().Err(err).Msg("setup endpoints failed")

@@ -101,10 +101,50 @@ METRICS_ENDPOINTS=http://localhost:8080/metrics,http://localhost:9100/metrics
 | `METRICS_SERVER_WRITE_TIMEOUT` | `10s` | Max time to write response |
 | `METRICS_SERVER_IDLE_TIMEOUT` | `60s` | Keep-alive idle connection timeout |
 | `METRICS_SERVER_MAX_HEADER_BYTES` | `1048576` | Max request header size (1 MiB) |
+| `OTEL_TRACES_EXPORTER` | `none` | Tracing exporter: `none` (disabled), `stdout`, or `otlp` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | *—* | OTLP collector gRPC endpoint (e.g. `jaeger:4317`). Required when `OTEL_TRACES_EXPORTER=otlp` |
+| `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set to `true` to disable TLS for the OTLP gRPC exporter (e.g. local Jaeger) |
 
 **Security defaults:** `strict` mode rejects unsafe endpoint shapes (unsupported schemes, URL credentials, non-metrics paths). Redirect responses from scrape targets are not followed. Invalid metric samples are dropped and reflected in self-instrumentation metrics.
 
 </details>
+
+## Observability
+
+### Self-Instrumentation Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `metrics_aggregator_scrape_success` | gauge | Whether each endpoint's last scrape succeeded (1/0) |
+| `metrics_aggregator_scrape_duration_seconds` | histogram | Per-endpoint scrape duration with percentile support |
+| `metrics_aggregator_scrape_errors_total` | counter | Per-endpoint cumulative scrape failure count |
+| `metrics_aggregator_scrape_invalid_samples` | gauge | Invalid metric lines dropped per endpoint |
+| `metrics_aggregator_requests_total` | counter | Total aggregation executions |
+| `metrics_aggregator_errors_total` | counter | Total failed aggregations (all endpoints down) |
+| `metrics_aggregator_http_requests_total` | counter | Total HTTP requests to `/metrics` (includes cache hits) |
+| `metrics_aggregator_http_request_duration_seconds` | histogram | Handler-level request duration |
+
+### Alerting Rules
+
+Production-ready Prometheus alerting rules are shipped in [`alerts.rules.yml`](alerts.rules.yml). Load them into your Prometheus or Alertmanager configuration. See [`runbook.md`](runbook.md) for investigation steps and SLO targets.
+
+### Grafana Dashboard
+
+Import [`grafana-dashboard.json`](grafana-dashboard.json) into Grafana. It includes panels for scrape health, duration heatmaps, error rates, and quantile time series. Uses a `$datasource` template variable.
+
+### Distributed Tracing
+
+Set `OTEL_TRACES_EXPORTER=otlp` and `OTEL_EXPORTER_OTLP_ENDPOINT=<collector>:4317` to enable OpenTelemetry tracing. Each `/metrics` request creates a parent span with child spans per scrape endpoint. W3C `traceparent` headers are forwarded to scrape targets.
+
+To try locally with Jaeger:
+```bash
+OTEL_EXPORTER_OTLP_INSECURE=true docker compose --profile tracing up --build
+# Open http://localhost:16686 for Jaeger UI
+```
+
+### Log Correlation
+
+Inbound `traceparent` headers are parsed and `trace_id`/`span_id` fields are added to structured log output. `X-Request-Id` is forwarded to scrape targets for request correlation.
 
 ## Deployment examples
 
