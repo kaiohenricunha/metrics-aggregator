@@ -6,6 +6,7 @@
 [![codecov](https://codecov.io/gh/kaiohenricunha/metrics-aggregator/branch/main/graph/badge.svg)](https://codecov.io/gh/kaiohenricunha/metrics-aggregator)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kaiohenricunha/metrics-aggregator)](https://goreportcard.com/report/github.com/kaiohenricunha/metrics-aggregator)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/metrics-aggregator)](https://artifacthub.io/packages/container/kaiohenricunha447/metrics-aggregator)
 
 A Go sidecar that scrapes Prometheus-formatted metrics from every container in a pod, merges them into a single `/metrics` endpoint, and injects an `origin_container` label so you can tell which container produced each metric.
 
