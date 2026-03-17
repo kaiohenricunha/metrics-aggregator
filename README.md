@@ -12,7 +12,7 @@ A Go sidecar that scrapes Prometheus-formatted metrics from every container in a
 
 ## How it works
 
-```
+```txt
 ┌─────────────────────────────────────────────────┐
 │  Pod                                            │
 │                                                 │
@@ -103,13 +103,13 @@ docker compose up
 
 **JSON map** (recommended — gives meaningful `origin_container` label values):
 
-```
+```yaml
 METRICS_ENDPOINTS='{"api":"http://localhost:8080/metrics","worker":"http://localhost:9100/metrics"}'
 ```
 
 **Comma-separated URLs** (auto-names endpoints as `endpoint1`, `endpoint2`, ...):
 
-```
+```txt
 METRICS_ENDPOINTS=http://localhost:8080/metrics,http://localhost:9100/metrics
 ```
 
@@ -162,6 +162,7 @@ Import [`grafana-dashboard.json`](grafana-dashboard.json) into Grafana. It inclu
 Set `OTEL_TRACES_EXPORTER=otlp` and `OTEL_EXPORTER_OTLP_ENDPOINT=<collector>:4317` to enable OpenTelemetry tracing. Each `/metrics` request creates a parent span with child spans per scrape endpoint. W3C `traceparent` headers are forwarded to scrape targets.
 
 To try locally with Jaeger:
+
 ```bash
 OTEL_EXPORTER_OTLP_INSECURE=true docker compose --profile tracing up --build
 # Open http://localhost:16686 for Jaeger UI
