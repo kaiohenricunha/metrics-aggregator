@@ -92,8 +92,9 @@ func TestDockerPublish_ReferencesValidTrivyStepID(t *testing.T) {
 
 func TestLintWorkflow_GovulncheckRunsAsStep(t *testing.T) {
 	content := mustReadText(t, ".github/workflows/lint.yml")
-	if !strings.Contains(content, "golang.org/x/vuln/cmd/govulncheck") {
-		t.Fatal("lint workflow must run govulncheck via go run, not via a third-party action")
+	re := regexp.MustCompile(`(?m)^\s+run:.*go run.*golang\.org/x/vuln/cmd/govulncheck`)
+	if !re.MatchString(content) {
+		t.Fatal("lint workflow must invoke govulncheck via a 'run: go run ...' step")
 	}
 }
 
