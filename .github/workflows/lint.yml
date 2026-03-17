@@ -40,6 +40,5 @@ jobs:
       - name: Run Revive
         run: revive -formatter friendly ./...
 
-      - uses: golang/govulncheck-action@b625fbe08f3bccbe446d94fbf87fcc875a4f50ee # v1
-        with:
-          repo-checkout: false
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

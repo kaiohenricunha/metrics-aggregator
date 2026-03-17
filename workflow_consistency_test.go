@@ -90,11 +90,10 @@ func TestDockerPublish_ReferencesValidTrivyStepID(t *testing.T) {
 	}
 }
 
-func TestLintWorkflow_GovulncheckDisablesNestedCheckout(t *testing.T) {
+func TestLintWorkflow_GovulncheckRunsAsStep(t *testing.T) {
 	content := mustReadText(t, ".github/workflows/lint.yml")
-	re := regexp.MustCompile(`(?ms)golang/govulncheck-action@v1.*repo-checkout:\s*false`)
-	if !re.MatchString(content) {
-		t.Fatal("lint workflow must set repo-checkout: false for golang/govulncheck-action")
+	if !strings.Contains(content, "golang.org/x/vuln/cmd/govulncheck") {
+		t.Fatal("lint workflow must run govulncheck via go run, not via a third-party action")
 	}
 }
 
