@@ -13,12 +13,12 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v4
         with:
           fetch-depth: 0    # labeler reads diff against base branch
 
       - name: Run labeler
-        uses: actions/labeler@v4
+        uses: actions/labeler@2b3140d24b1d49c9b5f7d4f9866f6f5f7d3484ec # v4
         with:
           configuration-path: .github/labeler.yml   # default, but explicit
           sync-labels: false
