@@ -162,8 +162,22 @@ ensure_promtool() {
     aarch64) arch="arm64" ;;
   esac
   local tarball="prometheus-2.53.0.${os}-${arch}.tar.gz"
-  local url="https://github.com/prometheus/prometheus/releases/download/v2.53.0/${tarball}"
-  curl -sL "$url" | tar xz --strip-components=1 -C /tmp "prometheus-2.53.0.${os}-${arch}/promtool"
+  local base_url="https://github.com/prometheus/prometheus/releases/download/v2.53.0"
+  local url="${base_url}/${tarball}"
+  local checksum_url="${base_url}/sha256sums.txt"
+  local tmp_tar; tmp_tar="$(mktemp /tmp/promtool-XXXXXX.tar.gz)"
+  local tmp_sums; tmp_sums="$(mktemp /tmp/promtool-sums-XXXXXX.txt)"
+  curl -sL "$url" -o "$tmp_tar"
+  curl -sL "$checksum_url" -o "$tmp_sums"
+  # Verify checksum — extract the line for this tarball and check
+  if ! grep "${tarball}" "$tmp_sums" | sed "s|${tarball}|${tmp_tar}|" | sha256sum -c --status; then
+    echo "ERROR: checksum verification failed for ${tarball}" >&2
+    rm -f "$tmp_tar" "$tmp_sums"
+    return 1
+  fi
+  rm -f "$tmp_sums"
+  tar xz --strip-components=1 -C /tmp "prometheus-2.53.0.${os}-${arch}/promtool" < "$tmp_tar"
+  rm -f "$tmp_tar"
   chmod +x /tmp/promtool
   export PATH="/tmp:$PATH"
   info "promtool installed to /tmp/promtool"
@@ -184,8 +198,24 @@ ensure_istioctl() {
     aarch64) arch="arm64" ;;
   esac
   local tarball="istioctl-1.24.2-${os}-${arch}.tar.gz"
-  local url="https://github.com/istio/istio/releases/download/1.24.2/${tarball}"
-  curl -sL "$url" | tar xz -C /tmp istioctl
+  local base_url="https://github.com/istio/istio/releases/download/1.24.2"
+  local url="${base_url}/${tarball}"
+  local checksum_url="${base_url}/${tarball}.sha256"
+  local tmp_tar; tmp_tar="$(mktemp /tmp/istioctl-XXXXXX.tar.gz)"
+  local tmp_sum; tmp_sum="$(mktemp /tmp/istioctl-sum-XXXXXX.txt)"
+  curl -sL "$url" -o "$tmp_tar"
+  curl -sL "$checksum_url" -o "$tmp_sum"
+  # Verify checksum — the .sha256 file contains just the hex digest
+  local expected; expected="$(cat "$tmp_sum" | awk '{print $1}')"
+  local actual; actual="$(sha256sum "$tmp_tar" | awk '{print $1}')"
+  if [[ "$expected" != "$actual" ]]; then
+    echo "ERROR: checksum verification failed for ${tarball}" >&2
+    rm -f "$tmp_tar" "$tmp_sum"
+    return 1
+  fi
+  rm -f "$tmp_sum"
+  tar xz -C /tmp istioctl < "$tmp_tar"
+  rm -f "$tmp_tar"
   chmod +x /tmp/istioctl
   export PATH="/tmp:$PATH"
   info "istioctl installed to /tmp/istioctl"
