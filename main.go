@@ -436,7 +436,8 @@ func main() {
 	if _, err := validatePort(port); err != nil {
 		log.Fatal().Err(err).Msg("invalid METRICS_AGGREGATOR_PORT")
 	}
-	addr := ":" + port
+	bindAddr := os.Getenv("METRICS_BIND_ADDRESS")
+	addr := bindAddr + ":" + port
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
