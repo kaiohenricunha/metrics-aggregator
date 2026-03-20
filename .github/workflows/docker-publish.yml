@@ -83,6 +83,8 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             GO_VERSION=${{ steps.goversion.outputs.version }}
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
 
       - name: Sign the published Docker image
         if: ${{ steps.publish-policy.outputs.should_publish == 'true' }}

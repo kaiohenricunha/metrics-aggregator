@@ -1,12 +1,16 @@
 # ── Stage 1: build ──────────────────────────────────────────────
 ARG GO_VERSION=1.26.1         # <── default
+ARG VERSION=dev
+ARG COMMIT=unknown
 FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache git
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o metrics-aggregator .
+ARG VERSION=dev
+ARG COMMIT=unknown
+RUN CGO_ENABLED=0 go build -ldflags="-X main.version=${VERSION} -X main.commitSHA=${COMMIT}" -o metrics-aggregator .
 
 # ── Stage 2: final image ───────────────────────────────────────
 FROM alpine:3.20

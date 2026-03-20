@@ -37,6 +37,12 @@ const (
 	defaultMaxInflight       = 32
 )
 
+// version and commitSHA are injected at build time via -ldflags.
+var (
+	version   = "dev"
+	commitSHA = "unknown"
+)
+
 func init() {
 	zerolog.TimeFieldFormat = time.RFC3339
 	level, err := zerolog.ParseLevel(os.Getenv("LOG_LEVEL"))
@@ -302,6 +308,13 @@ func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.H
 				"metrics_aggregator_cache_misses_total %d\n",
 			cache.hits.Load(),
 			cache.misses.Load(),
+		)
+		// Append build info metric
+		metrics += fmt.Sprintf(
+			"# HELP metrics_aggregator_build_info Build information about the metrics-aggregator.\n"+
+				"# TYPE metrics_aggregator_build_info gauge\n"+
+				"metrics_aggregator_build_info{version=%q,commit=%q} 1\n",
+			version, commitSHA,
 		)
 		// Append HTTP-level metrics (increment on every request, including cache hits)
 		metrics += fmt.Sprintf(
