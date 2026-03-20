@@ -686,6 +686,27 @@ func TestRequestIDMiddleware_FallbackOnAllNonPrintable(t *testing.T) {
 	}
 }
 
+func TestMetricsHandler_BuildInfo(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+	t.Setenv("METRICS_CACHE_TTL", "0s")
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	resp, err := http.Get("http://" + addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), `metrics_aggregator_build_info{version="dev",commit="unknown"} 1`) {
+		t.Fatalf("expected build_info metric, got:\n%s", body)
+	}
+}
+
 func TestMetricsHandler_CacheHitsAndMisses(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("up 1\n"))
