@@ -187,7 +187,7 @@ else
   # We only fail on actual parsing errors.
   PROMTOOL_OUTPUT=$(curl -sf "http://localhost:${PF_AGG_PORT}/metrics" | promtool check metrics 2>&1 || true)
   echo "$PROMTOOL_OUTPUT" > "$EVIDENCE_DIR/promtool-check.txt"
-  if echo "$PROMTOOL_OUTPUT" | grep -v "no help text" | grep -q "."; then
+  if echo "$PROMTOOL_OUTPUT" | grep -vE '^[^:]+: no help text for metric:' | grep -q '[^[:space:]]'; then
     fail "promtool check metrics failed"
   else
     pass "promtool check metrics passed (lint-only warnings)"
@@ -387,7 +387,7 @@ if [[ -s "$EVIDENCE_DIR/istio-permissive-metrics.txt" ]]; then
   # promtool validation in mesh (same lint tolerance as Phase 4)
   ISTIO_PROMTOOL_OUTPUT=$(curl -sf "http://localhost:${PF_ISTIO_PORT}/metrics" | promtool check metrics 2>&1 || true)
   echo "$ISTIO_PROMTOOL_OUTPUT" > "$EVIDENCE_DIR/promtool-istio-check.txt"
-  if echo "$ISTIO_PROMTOOL_OUTPUT" | grep -v "no help text" | grep -q "."; then
+  if echo "$ISTIO_PROMTOOL_OUTPUT" | grep -vE '^[^:]+: no help text for metric:' | grep -q '[^[:space:]]'; then
     fail "Istio permissive: promtool check metrics failed"
   else
     pass "Istio permissive: promtool check metrics passed (lint-only warnings)"
