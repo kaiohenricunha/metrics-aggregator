@@ -934,6 +934,34 @@ func TestAggregator_NoSpansWhenNoTracer(t *testing.T) {
 	}
 }
 
+func TestAggregator_OversizedBodyDoesNotIncrementScrapeErrors(t *testing.T) {
+	big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		// Write more than 10 MiB
+		line := strings.Repeat("x", 1024) + "\n"
+		for i := 0; i < 11*1024; i++ {
+			_, _ = w.Write([]byte(line))
+		}
+	}))
+	defer big.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer good.Close()
+
+	agg := newTestAggregator([]Endpoint{
+		{Name: "big", URL: big.URL},
+		{Name: "good", URL: good.URL},
+	})
+	res, err := agg.AggregateMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(res, `metrics_aggregator_scrape_errors_total{endpoint="big"} 0`) {
+		t.Fatalf("expected scrape_errors_total for big=0, got:\n%s", res)
+	}
+}
+
 func TestNewAggregator_CSVFallbackLogNoErr(t *testing.T) {
 	var buf bytes.Buffer
 	origLogger := log.Logger

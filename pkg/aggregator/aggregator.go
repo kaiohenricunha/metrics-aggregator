@@ -252,6 +252,7 @@ func (a *Aggregator) AggregateMetrics(ctx context.Context) (string, error) {
 					Str("url", sanitizedURL).
 					Int("max_body_size", maxBodySize).
 					Msg("scrape body exceeded size limit; discarding endpoint payload")
+				failed = false // oversized body is not a scrape connectivity error
 				results[idx] = scrapeResult{duration: time.Since(start)}
 				return
 			}
