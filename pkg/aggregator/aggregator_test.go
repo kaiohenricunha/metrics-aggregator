@@ -980,6 +980,37 @@ func TestNewAggregator_CSVFallbackLogNoErr(t *testing.T) {
 	}
 }
 
+func TestNewAggregator_ValidHTTPS(t *testing.T) {
+	_, err := NewAggregator(`{"svc":"https://example.com/metrics"}`)
+	if err != nil {
+		t.Fatalf("expected no error for HTTPS URL, got: %v", err)
+	}
+}
+
+func TestAggregateMetrics_HTTPSEndpoint(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer srv.Close()
+
+	t.Setenv("METRICS_SCRAPE_TLS_INSECURE_SKIP_VERIFY", "true")
+	t.Setenv("METRICS_SCRAPE_TLS_CACERT", "")
+	t.Setenv("METRICS_SCRAPE_TLS_CERT", "")
+	t.Setenv("METRICS_SCRAPE_TLS_KEY", "")
+
+	agg, err := NewAggregator(fmt.Sprintf(`{"svc":"%s"}`, srv.URL))
+	if err != nil {
+		t.Fatalf("NewAggregator error: %v", err)
+	}
+	res, err := agg.AggregateMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("AggregateMetrics error: %v", err)
+	}
+	if !strings.Contains(res, `origin_container="svc"`) {
+		t.Fatalf("expected origin_container label, got:\n%s", res)
+	}
+}
+
 func TestBuildTLSConfig_DefaultsToNil(t *testing.T) {
 	t.Setenv("METRICS_SCRAPE_TLS_CACERT", "")
 	t.Setenv("METRICS_SCRAPE_TLS_CERT", "")
