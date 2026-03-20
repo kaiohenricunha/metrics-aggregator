@@ -3,10 +3,18 @@ package aggregator
 import (
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 )
+
+// bucketVal acquires h.mu and returns h.counts[i] (safe for tests in package aggregator).
+func bucketVal(h *Histogram, i int) int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.counts[i]
+}
 
 func TestHistogram_Observe_SingleValue(t *testing.T) {
 	h := NewHistogram(DefaultBuckets())
@@ -21,7 +29,7 @@ func TestHistogram_Observe_SingleValue(t *testing.T) {
 	// 0.5 <= 0.5, 1, 2.5, 5, 10, +Inf — so buckets at those boundaries should be 1
 	// 0.5 > 0.005, 0.01, 0.025, 0.05, 0.1, 0.25 — those should be 0
 	for i, bound := range h.bounds {
-		val := h.counts[i].Load()
+		val := bucketVal(h, i)
 		if bound >= 0.5 {
 			if val != 1 {
 				t.Errorf("bucket le=%.3f: expected 1, got %d", bound, val)
@@ -52,7 +60,7 @@ func TestHistogram_Observe_MultipleValues(t *testing.T) {
 	// Cumulative: le=1 → 1, le=5 → 2, le=10 → 3, le=+Inf → 4
 	expected := []int64{1, 2, 3, 4}
 	for i, exp := range expected {
-		got := h.counts[i].Load()
+		got := bucketVal(h, i)
 		if got != exp {
 			t.Errorf("bucket[%d] le=%v: expected %d, got %d", i, h.bounds[i], exp, got)
 		}
@@ -215,7 +223,8 @@ func TestHistogram_Render_AllLinesValidFormat(t *testing.T) {
 	h.Observe(0.123)
 
 	samples := RenderSamples("my_metric", `endpoint="a"`, h)
-	metricLine := regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{[^}]*\})?\s+\S+(\s+\S+)?$`)
+	// Updated pattern to handle quoted strings in label values (like le="+Inf")
+	metricLine := regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{(?:[^"{}\\]|"(?:[^"\\]|\\.)*")*\})?\s+\S+(\s+\S+)?$`)
 
 	for _, line := range strings.Split(samples, "\n") {
 		if line == "" {
@@ -224,5 +233,76 @@ func TestHistogram_Render_AllLinesValidFormat(t *testing.T) {
 		if !metricLine.MatchString(line) {
 			t.Errorf("labeled histogram line does not match Prometheus format: %q", line)
 		}
+	}
+}
+
+func TestHistogram_ConcurrentObserveAndRender(t *testing.T) {
+	h := NewHistogram(DefaultBuckets())
+	const goroutines = 100
+	const perGoroutine = 1000
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perGoroutine; i++ {
+				h.Observe(1.0)
+			}
+		}()
+	}
+
+	// Reader goroutine: continuously render while writers are active
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wg.Wait()
+	}()
+
+	renderCount := 0
+	for {
+		select {
+		case <-done:
+			goto doneRendering
+		default:
+			snap := RenderSamples("test_hist", "", h)
+			renderCount++
+			// Verify bucket counts in any snapshot are monotonically non-decreasing
+			var prevCount int64 = -1
+			for _, line := range strings.Split(snap, "\n") {
+				if !strings.Contains(line, "_bucket{le=") {
+					continue
+				}
+				parts := strings.Fields(line)
+				if len(parts) < 2 {
+					continue
+				}
+				v, err := strconv.ParseInt(parts[len(parts)-1], 10, 64)
+				if err != nil {
+					continue
+				}
+				if v < prevCount {
+					t.Errorf("bucket counts not monotonically non-decreasing: prev=%d, cur=%d in line %q", prevCount, v, line)
+				}
+				prevCount = v
+			}
+		}
+	}
+doneRendering:
+
+	if got := h.Count(); got != goroutines*perGoroutine {
+		t.Fatalf("expected count %d, got %d", goroutines*perGoroutine, got)
+	}
+	if got := h.Sum(); got != float64(goroutines*perGoroutine) {
+		t.Fatalf("expected sum %g, got %g", float64(goroutines*perGoroutine), got)
+	}
+	_ = renderCount
+}
+
+func BenchmarkHistogramObserve(b *testing.B) {
+	h := NewHistogram(DefaultBuckets())
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		h.Observe(0.5)
 	}
 }
