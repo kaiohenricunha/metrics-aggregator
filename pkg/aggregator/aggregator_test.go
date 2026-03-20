@@ -934,6 +934,14 @@ func TestAggregator_NoSpansWhenNoTracer(t *testing.T) {
 	}
 }
 
+func TestValidateEndpointURL_LegacyBlocksLinkLocal(t *testing.T) {
+	t.Setenv("METRICS_SECURITY_MODE", "legacy")
+	_, err := NewAggregator(`{"svc":"http://169.254.169.254/latest/meta-data/"}`)
+	if err == nil || !strings.Contains(err.Error(), "link-local") {
+		t.Fatalf("expected link-local error, got %v", err)
+	}
+}
+
 func TestIsValidPrometheusSampleLine_EscapedBrace(t *testing.T) {
 	tests := []struct {
 		name  string
