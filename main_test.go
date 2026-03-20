@@ -686,6 +686,27 @@ func TestRequestIDMiddleware_FallbackOnAllNonPrintable(t *testing.T) {
 	}
 }
 
+func TestMetricsCache_ContextCancelledDuringFetch(t *testing.T) {
+	fetch := func(ctx context.Context) (string, error) {
+		select {
+		case <-time.After(2 * time.Second):
+			return "data", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	cache := &metricsCache{ttl: 10 * time.Second}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := cache.getOrFetch(ctx, fetch)
+	if err == nil {
+		t.Fatal("expected context error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context error, got %v", err)
+	}
+}
+
 func TestMetricsCache_ServeStaleOnError(t *testing.T) {
 	callCount := 0
 	fetch := func(_ context.Context) (string, error) {
