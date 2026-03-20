@@ -70,13 +70,15 @@ type httpServerConfig struct {
 }
 
 type metricsCache struct {
-	ttl       time.Duration
-	mu        sync.Mutex
-	value     string
-	expiresAt time.Time
-	inFlight  chan struct{}
-	hits      atomic.Int64
-	misses    atomic.Int64
+	ttl               time.Duration
+	mu                sync.Mutex
+	value             string
+	expiresAt         time.Time
+	inFlight          chan struct{}
+	hits              atomic.Int64
+	misses            atomic.Int64
+	serveStaleOnError bool
+	lastGoodValue     string
 }
 
 var (
@@ -236,6 +238,7 @@ func (c *metricsCache) getOrFetch(ctx context.Context, fetch func(context.Contex
 
 	c.mu.Lock()
 	if err == nil {
+		c.lastGoodValue = value
 		if c.ttl > 0 {
 			c.value = value
 			c.expiresAt = time.Now().Add(c.ttl)
@@ -243,6 +246,13 @@ func (c *metricsCache) getOrFetch(ctx context.Context, fetch func(context.Contex
 			c.value = ""
 			c.expiresAt = time.Time{}
 		}
+	} else if c.serveStaleOnError && c.lastGoodValue != "" {
+		stale := c.lastGoodValue
+		wait := c.inFlight
+		c.inFlight = nil
+		close(wait)
+		c.mu.Unlock()
+		return stale, nil
 	}
 	wait := c.inFlight
 	c.inFlight = nil
@@ -253,7 +263,8 @@ func (c *metricsCache) getOrFetch(ctx context.Context, fetch func(context.Contex
 }
 
 func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.HandlerFunc {
-	cache := &metricsCache{ttl: cfg.cacheTTL}
+	serveStale := strings.EqualFold(strings.TrimSpace(os.Getenv("METRICS_CACHE_SERVE_STALE_ON_ERROR")), "true")
+	cache := &metricsCache{ttl: cfg.cacheTTL, serveStaleOnError: serveStale}
 	inflightLimiter := make(chan struct{}, cfg.maxInflight)
 	var httpRequests atomic.Int64
 	httpDurationHist := aggregator.NewHistogram(aggregator.DefaultBuckets())

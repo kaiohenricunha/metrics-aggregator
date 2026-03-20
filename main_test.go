@@ -686,6 +686,43 @@ func TestRequestIDMiddleware_FallbackOnAllNonPrintable(t *testing.T) {
 	}
 }
 
+func TestMetricsCache_ServeStaleOnError(t *testing.T) {
+	callCount := 0
+	fetch := func(_ context.Context) (string, error) {
+		callCount++
+		if callCount == 1 {
+			return "good data", nil
+		}
+		return "", errors.New("fetch failed")
+	}
+
+	cache := &metricsCache{ttl: 0, serveStaleOnError: true}
+	// First fetch succeeds
+	v, err := cache.getOrFetch(context.Background(), fetch)
+	if err != nil || v != "good data" {
+		t.Fatalf("first fetch: got (%q, %v)", v, err)
+	}
+	// Second fetch fails but should return stale
+	v, err = cache.getOrFetch(context.Background(), fetch)
+	if err != nil {
+		t.Fatalf("second fetch should return stale, got error: %v", err)
+	}
+	if v != "good data" {
+		t.Fatalf("expected stale 'good data', got %q", v)
+	}
+}
+
+func TestMetricsCache_NoStaleIfNeverSucceeded(t *testing.T) {
+	fetch := func(_ context.Context) (string, error) {
+		return "", errors.New("always fails")
+	}
+	cache := &metricsCache{ttl: 0, serveStaleOnError: true}
+	_, err := cache.getOrFetch(context.Background(), fetch)
+	if err == nil {
+		t.Fatal("expected error when no previous success exists")
+	}
+}
+
 func TestParseDurationEnv_NegativeUsesDefault(t *testing.T) {
 	t.Setenv("TEST_DUR_ENV", "-5s")
 	got := parseDurationEnv("TEST_DUR_ENV", 10*time.Second)
