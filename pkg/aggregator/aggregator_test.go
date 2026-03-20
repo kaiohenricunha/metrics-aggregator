@@ -934,6 +934,23 @@ func TestAggregator_NoSpansWhenNoTracer(t *testing.T) {
 	}
 }
 
+func TestNewAggregator_CSVFallbackLogNoErr(t *testing.T) {
+	var buf bytes.Buffer
+	origLogger := log.Logger
+	log.Logger = zerolog.New(&buf)
+	defer func() { log.Logger = origLogger }()
+
+	_, _ = NewAggregator("http://a/metrics,http://b/metrics")
+
+	output := buf.String()
+	if strings.Contains(output, `"error"`) {
+		t.Fatalf("log should not contain 'error' field, got: %s", output)
+	}
+	if strings.Contains(output, `"input_length"`) {
+		t.Fatalf("log should not contain 'input_length' field, got: %s", output)
+	}
+}
+
 func TestValidateEndpointURL_LegacyBlocksLinkLocal(t *testing.T) {
 	t.Setenv("METRICS_SECURITY_MODE", "legacy")
 	_, err := NewAggregator(`{"svc":"http://169.254.169.254/latest/meta-data/"}`)
