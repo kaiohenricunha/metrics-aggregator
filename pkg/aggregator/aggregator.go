@@ -94,10 +94,7 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 		}
 	} else {
 		// 2) fallback: comma-separated URLs
-		log.Warn().
-			Err(err).
-			Int("input_length", len(endpointsConfig)).
-			Msg("failed JSON parse, trying comma-separated list")
+		log.Warn().Msg("METRICS_ENDPOINTS is not valid JSON; trying comma-separated URL list")
 
 		for i, url := range strings.Split(endpointsConfig, ",") {
 			url = strings.TrimSpace(url)
