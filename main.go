@@ -236,6 +236,16 @@ func (c *metricsCache) getOrFetch(ctx context.Context, fetch func(context.Contex
 
 	value, err := fetch(ctx)
 
+	// Context cancelled — don't cache anything, propagate the context error.
+	if err != nil && ctx.Err() != nil {
+		c.mu.Lock()
+		wait := c.inFlight
+		c.inFlight = nil
+		close(wait)
+		c.mu.Unlock()
+		return "", ctx.Err()
+	}
+
 	c.mu.Lock()
 	if err == nil {
 		c.lastGoodValue = value
