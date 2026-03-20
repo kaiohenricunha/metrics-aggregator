@@ -85,7 +85,7 @@ Definitions live in `.claude/commands/`. A PostToolUse hook in `.claude/settings
   - Comma-separated URLs — auto-names sources `endpoint1`, `endpoint2`, …
   - Validates endpoint names against `[a-zA-Z0-9_-]+` to prevent malformed label values
 - `AggregateMetrics(ctx context.Context)` scrapes each endpoint **concurrently** (goroutines with `sync.WaitGroup`, 5s HTTP timeout, 10 MiB body limit), **strips `# TYPE`/`# HELP` metadata** from scraped output to avoid duplicates, injects `origin_container="<name>"` label into every metric line (skipping lines that already have it), prepends self-instrumentation metrics, returns error only if zero sources succeed. Uses `zerolog.Ctx(ctx)` for request-correlated log output (inherits `request_id` from middleware).
-- Self-instrumentation metrics (7 families): `metrics_aggregator_scrape_success` (gauge), `metrics_aggregator_scrape_duration_seconds` (histogram), `metrics_aggregator_scrape_errors_total` (counter per-endpoint), `metrics_aggregator_scrape_invalid_samples` (gauge), `metrics_aggregator_requests_total` (counter), `metrics_aggregator_errors_total` (counter), `metrics_aggregator_http_request_duration_seconds` (histogram, emitted by handler)
+- Self-instrumentation metrics (10 families): `metrics_aggregator_scrape_success` (gauge), `metrics_aggregator_scrape_duration_seconds` (histogram), `metrics_aggregator_scrape_errors_total` (counter per-endpoint), `metrics_aggregator_scrape_invalid_samples` (gauge), `metrics_aggregator_requests_total` (counter), `metrics_aggregator_errors_total` (counter), `metrics_aggregator_http_request_duration_seconds` (histogram, emitted by handler), `metrics_aggregator_cache_hits_total` (counter), `metrics_aggregator_cache_misses_total` (counter), `metrics_aggregator_build_info` (gauge with version and commit labels)
 - Custom `Histogram` primitive in `pkg/aggregator/histogram.go` — thread-safe, emits Prometheus exposition format
 - Per-endpoint scrape spans via OpenTelemetry (opt-in via `OTEL_TRACES_EXPORTER`)
 - Forwards `X-Request-Id` and `traceparent` headers to scrape targets for correlation
@@ -102,15 +102,23 @@ Definitions live in `.claude/commands/`. A PostToolUse hook in `.claude/settings
 ## Working Style
 
 - **Prefer targeted action over exploration.** This is a small, focused Go project (~1,750 lines across 7 files). Go directly to the relevant file and make the change rather than surveying the whole codebase first. Only explore broadly when scope is genuinely unclear.
+- **Execute immediately when asked.** When asked to "run", "execute", "proceed", "continue", or "resume" — begin the first concrete action without re-reading files or writing a new plan. If genuinely blocked, ask one focused question; otherwise act.
+- **One concern per session.** If scope grows beyond one PR's worth of changes, stop and ask to split into a new session rather than bundling unrelated concerns.
 - **Commits should be surgical.** Before committing, verify with `git diff --staged` that only files relevant to the current task are included. Do not bundle unrelated formatting or refactoring changes.
 - **One concern per commit.** Follow the existing Conventional Commits style. Each commit addresses exactly one concern.
 
 ## Verification Discipline
 
-- After implementing a fix, **run the relevant test(s)** before reporting success. At minimum: `go test ./pkg/aggregator -run '^TestRelevantName$' -v` for aggregator changes, or `go test -v ./...` for cross-cutting changes.
-- After editing `.go` files, confirm `go vet ./...` passes (the PostToolUse hook handles `gofmt`, but `go vet` catches semantic issues).
-- Before opening a PR, run `/check` (`make check` = build + vet + race tests + lint). All three static analysis tools must pass.
-- When fixing a CI failure, reproduce locally first, then verify the fix resolves it end-to-end before pushing.
+After implementing a fix:
+- [ ] Run the relevant test(s) before reporting success: `go test ./pkg/aggregator -run '^TestName$' -v` for aggregator changes, `go test -v ./...` for cross-cutting
+- [ ] `go vet ./...` passes (PostToolUse hook handles `gofmt`, but `go vet` catches semantic issues)
+
+Before opening a PR:
+- [ ] `/check` passes (`make check` = build + vet + race tests + lint)
+- [ ] All three static analysis tools (`staticcheck`, `revive`, `govulncheck`) pass
+
+When fixing a CI failure:
+- [ ] Reproduce locally first, then verify the fix resolves it end-to-end before pushing
 
 ## Environment Variables
 
@@ -118,9 +126,15 @@ Definitions live in `.claude/commands/`. A PostToolUse hook in `.claude/settings
 |---|---|---|
 | `METRICS_ENDPOINTS` | required | Comma-separated URLs or JSON map of name→URL |
 | `METRICS_AGGREGATOR_PORT` | `9090` | Port to serve `/metrics` |
+| `METRICS_BIND_ADDRESS` | (empty) | Bind address for the HTTP server (e.g. `127.0.0.1`) |
 | `LOG_LEVEL` | `info` | zerolog level: `debug`, `info`, `warn`, `error` |
 | `OTEL_TRACES_EXPORTER` | `none` | `none`, `stdout`, `otlp` — enables distributed tracing |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | OTLP collector gRPC endpoint (e.g. `jaeger:4317`) |
+| `METRICS_SCRAPE_TLS_CACERT` | (empty) | Path to PEM CA cert for HTTPS scrape targets |
+| `METRICS_SCRAPE_TLS_CERT` | (empty) | Path to PEM client cert for mTLS |
+| `METRICS_SCRAPE_TLS_KEY` | (empty) | Path to PEM client key for mTLS |
+| `METRICS_SCRAPE_TLS_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification (testing only) |
+| `METRICS_CACHE_SERVE_STALE_ON_ERROR` | `false` | Serve stale cached data when aggregation fails |
 
 ## CI/CD Overview
 
