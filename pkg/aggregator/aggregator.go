@@ -123,8 +123,16 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 		return nil, fmt.Errorf("no valid endpoints found in %s", metricsEnvVariableName)
 	}
 
+	tlsCfg, err := BuildTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("TLS configuration error: %w", err)
+	}
+	transport := &http.Transport{
+		TLSClientConfig: tlsCfg,
+	}
 	client := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout:   5 * time.Second,
+		Transport: transport,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

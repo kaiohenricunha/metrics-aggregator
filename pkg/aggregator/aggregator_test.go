@@ -3,6 +3,7 @@ package aggregator
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -976,6 +977,66 @@ func TestNewAggregator_CSVFallbackLogNoErr(t *testing.T) {
 	}
 	if strings.Contains(output, `"input_length"`) {
 		t.Fatalf("log should not contain 'input_length' field, got: %s", output)
+	}
+}
+
+func TestBuildTLSConfig_DefaultsToNil(t *testing.T) {
+	t.Setenv("METRICS_SCRAPE_TLS_CACERT", "")
+	t.Setenv("METRICS_SCRAPE_TLS_CERT", "")
+	t.Setenv("METRICS_SCRAPE_TLS_KEY", "")
+	t.Setenv("METRICS_SCRAPE_TLS_INSECURE_SKIP_VERIFY", "")
+
+	cfg, err := BuildTLSConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil TLS config")
+	}
+	if cfg.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("expected MinVersion=TLS12, got %d", cfg.MinVersion)
+	}
+	if cfg.InsecureSkipVerify {
+		t.Fatal("expected InsecureSkipVerify=false")
+	}
+}
+
+func TestBuildTLSConfig_BadCACertPath(t *testing.T) {
+	t.Setenv("METRICS_SCRAPE_TLS_CACERT", "/nonexistent/ca.crt")
+	t.Setenv("METRICS_SCRAPE_TLS_CERT", "")
+	t.Setenv("METRICS_SCRAPE_TLS_KEY", "")
+	t.Setenv("METRICS_SCRAPE_TLS_INSECURE_SKIP_VERIFY", "")
+
+	_, err := BuildTLSConfig()
+	if err == nil {
+		t.Fatal("expected error for bad CA cert path")
+	}
+}
+
+func TestBuildTLSConfig_CertWithoutKey(t *testing.T) {
+	t.Setenv("METRICS_SCRAPE_TLS_CACERT", "")
+	t.Setenv("METRICS_SCRAPE_TLS_CERT", "/some/cert.pem")
+	t.Setenv("METRICS_SCRAPE_TLS_KEY", "")
+	t.Setenv("METRICS_SCRAPE_TLS_INSECURE_SKIP_VERIFY", "")
+
+	_, err := BuildTLSConfig()
+	if err == nil {
+		t.Fatal("expected error when cert set without key")
+	}
+}
+
+func TestBuildTLSConfig_InsecureSkipVerify(t *testing.T) {
+	t.Setenv("METRICS_SCRAPE_TLS_CACERT", "")
+	t.Setenv("METRICS_SCRAPE_TLS_CERT", "")
+	t.Setenv("METRICS_SCRAPE_TLS_KEY", "")
+	t.Setenv("METRICS_SCRAPE_TLS_INSECURE_SKIP_VERIFY", "true")
+
+	cfg, err := BuildTLSConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.InsecureSkipVerify {
+		t.Fatal("expected InsecureSkipVerify=true")
 	}
 }
 
