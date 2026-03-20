@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -30,9 +31,10 @@ const (
 	metricsEnvVariableName      = "METRICS_ENDPOINTS"
 	securityModeEnvVariableName = "METRICS_SECURITY_MODE"
 	securityModeStrict          = "strict"
-	securityModeLegacy          = "legacy"
-	defaultMetricsPath          = "/metrics"
-	maxBodySize                 = 10 << 20 // 10 MiB
+	// Deprecated: legacy mode will be removed in a future release.
+	securityModeLegacy = "legacy"
+	defaultMetricsPath = "/metrics"
+	maxBodySize        = 10 << 20 // 10 MiB
 )
 
 var (
@@ -124,11 +126,11 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 		return nil, fmt.Errorf("no valid endpoints found in %s", metricsEnvVariableName)
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	if securityMode != securityModeLegacy {
-		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
-		}
+		},
 	}
 
 	scrapeDurationHist := make(map[string]*Histogram, len(parsed))
@@ -401,7 +403,12 @@ func validateEndpointURL(rawURL, securityMode string) (string, error) {
 	if parsed.Host == "" {
 		return "", fmt.Errorf("missing host")
 	}
+	// Always reject link-local addresses, even in legacy mode.
+	if err := rejectLinkLocal(parsed.Host); err != nil {
+		return "", err
+	}
 	if securityMode == securityModeLegacy {
+		log.Warn().Msg("METRICS_SECURITY_MODE=legacy is deprecated; switch to strict mode")
 		return parsed.String(), nil
 	}
 	if parsed.User != nil {
@@ -431,6 +438,30 @@ func sanitizeURLForLog(rawURL string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.Redacted()
+}
+
+// rejectLinkLocal returns an error if the host resolves to a link-local address (169.254.0.0/16).
+// Returns nil on DNS error — let the HTTP request fail naturally.
+func rejectLinkLocal(host string) error {
+	hostname := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostname = h
+	}
+	linkLocal := &net.IPNet{
+		IP:   net.ParseIP("169.254.0.0"),
+		Mask: net.CIDRMask(16, 32),
+	}
+	addrs, err := net.DefaultResolver.LookupIPAddr(context.Background(), hostname)
+	if err != nil {
+		// DNS failure — let the HTTP client handle it
+		return nil
+	}
+	for _, addr := range addrs {
+		if linkLocal.Contains(addr.IP) {
+			return fmt.Errorf("link-local address %s is not allowed", addr.IP)
+		}
+	}
+	return nil
 }
 
 func isValidPrometheusSampleLine(line string) bool {
