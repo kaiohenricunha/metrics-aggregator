@@ -685,6 +685,37 @@ func TestRequestIDMiddleware_FallbackOnAllNonPrintable(t *testing.T) {
 	}
 }
 
+func TestPortValidation_NonNumeric(t *testing.T) {
+	_, err := validatePort("abc")
+	if err == nil {
+		t.Fatal("expected error for non-numeric port")
+	}
+}
+
+func TestPortValidation_Zero(t *testing.T) {
+	_, err := validatePort("0")
+	if err == nil {
+		t.Fatal("expected error for port 0")
+	}
+}
+
+func TestPortValidation_OutOfRange(t *testing.T) {
+	_, err := validatePort("99999")
+	if err == nil {
+		t.Fatal("expected error for port out of range")
+	}
+}
+
+func TestPortValidation_Valid(t *testing.T) {
+	p, err := validatePort("9090")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p != "9090" {
+		t.Fatalf("expected '9090', got %q", p)
+	}
+}
+
 func TestTracingMiddleware_NoopWhenDisabled(t *testing.T) {
 	// Don't set up any TracerProvider — use default no-op
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

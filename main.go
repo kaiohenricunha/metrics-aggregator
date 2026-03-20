@@ -309,6 +309,18 @@ func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.H
 	}
 }
 
+// validatePort checks that raw is a valid TCP port number (1-65535).
+func validatePort(raw string) (string, error) {
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid port %q: must be a number", raw)
+	}
+	if n <= 0 || n > 65535 {
+		return "", fmt.Errorf("invalid port %d: must be in range 1-65535", n)
+	}
+	return raw, nil
+}
+
 func parseDurationEnv(name string, fallback time.Duration) time.Duration {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -420,6 +432,9 @@ func main() {
 	port := os.Getenv("METRICS_AGGREGATOR_PORT")
 	if port == "" {
 		port = aggregator.DefaultAggregatorPort
+	}
+	if _, err := validatePort(port); err != nil {
+		log.Fatal().Err(err).Msg("invalid METRICS_AGGREGATOR_PORT")
 	}
 	addr := ":" + port
 
