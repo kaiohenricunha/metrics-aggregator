@@ -37,7 +37,7 @@ const (
 
 var (
 	validName      = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	sampleLine     = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{[^}]*\})?\s+(?:NaN|[+-]?Inf|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+\d+)?$`)
+	sampleLine     = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{(?:[^"{}\\]|"(?:[^"\\]|\\.)*")*\})?\s+(?:NaN|[+-]?Inf|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+\d+)?$`)
 	originLabelKey = regexp.MustCompile(`[{,]\s*origin_container\s*=`)
 )
 

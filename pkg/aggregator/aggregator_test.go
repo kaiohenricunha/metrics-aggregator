@@ -933,3 +933,24 @@ func TestAggregator_NoSpansWhenNoTracer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestIsValidPrometheusSampleLine_EscapedBrace(t *testing.T) {
+	tests := []struct {
+		name  string
+		line  string
+		valid bool
+	}{
+		{"escaped brace in label value", `http_requests_total{status="5xx\}escaped"} 42`, true},
+		{"embedded quote escape in value", `metric{a="b\"}c"} 1`, true},
+		{"normal label", `metric{a="b"} 1`, true},
+		{"no labels", `metric 1`, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isValidPrometheusSampleLine(tc.line)
+			if got != tc.valid {
+				t.Errorf("isValidPrometheusSampleLine(%q) = %v, want %v", tc.line, got, tc.valid)
+			}
+		})
+	}
+}
