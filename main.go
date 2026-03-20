@@ -69,6 +69,8 @@ type metricsCache struct {
 	value     string
 	expiresAt time.Time
 	inFlight  chan struct{}
+	hits      atomic.Int64
+	misses    atomic.Int64
 }
 
 var (
@@ -206,11 +208,13 @@ func (c *metricsCache) getOrFetch(ctx context.Context, fetch func(context.Contex
 		if c.ttl > 0 && c.value != "" && time.Now().Before(c.expiresAt) {
 			value := c.value
 			c.mu.Unlock()
+			c.hits.Add(1)
 			return value, nil
 		}
 		if c.inFlight == nil {
 			c.inFlight = make(chan struct{})
 			c.mu.Unlock()
+			c.misses.Add(1)
 			break
 		}
 		wait := c.inFlight
@@ -288,6 +292,17 @@ func makeMetricsHandler(agg *aggregator.Aggregator, cfg httpServerConfig) http.H
 			return
 		}
 
+		// Append cache hit/miss metrics
+		metrics += fmt.Sprintf(
+			"# HELP metrics_aggregator_cache_hits_total Total number of cache hits.\n"+
+				"# TYPE metrics_aggregator_cache_hits_total counter\n"+
+				"metrics_aggregator_cache_hits_total %d\n"+
+				"# HELP metrics_aggregator_cache_misses_total Total number of cache misses.\n"+
+				"# TYPE metrics_aggregator_cache_misses_total counter\n"+
+				"metrics_aggregator_cache_misses_total %d\n",
+			cache.hits.Load(),
+			cache.misses.Load(),
+		)
 		// Append HTTP-level metrics (increment on every request, including cache hits)
 		metrics += fmt.Sprintf(
 			"# HELP metrics_aggregator_http_requests_total Total number of HTTP requests to the /metrics endpoint.\n"+
