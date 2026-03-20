@@ -686,6 +686,40 @@ func TestRequestIDMiddleware_FallbackOnAllNonPrintable(t *testing.T) {
 	}
 }
 
+func TestMetricsHandler_CacheHitsAndMisses(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+
+	t.Setenv("METRICS_CACHE_TTL", "10s")
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	// First request: cache miss
+	resp, _ := http.Get("http://" + addr + "/metrics")
+	body1, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body1), "metrics_aggregator_cache_misses_total 1") {
+		t.Fatalf("expected cache_misses_total 1 on first request, got:\n%s", body1)
+	}
+	if !strings.Contains(string(body1), "metrics_aggregator_cache_hits_total 0") {
+		t.Fatalf("expected cache_hits_total 0 on first request, got:\n%s", body1)
+	}
+
+	// Second request: cache hit
+	resp, _ = http.Get("http://" + addr + "/metrics")
+	body2, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body2), "metrics_aggregator_cache_hits_total 1") {
+		t.Fatalf("expected cache_hits_total 1 on second request, got:\n%s", body2)
+	}
+	if !strings.Contains(string(body2), "metrics_aggregator_cache_misses_total 1") {
+		t.Fatalf("expected cache_misses_total 1 on second request, got:\n%s", body2)
+	}
+}
+
 func TestRun_BindAddressRespected(t *testing.T) {
 	t.Setenv("METRICS_BIND_ADDRESS", "127.0.0.1")
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
