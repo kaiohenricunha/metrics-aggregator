@@ -104,6 +104,20 @@ func generateRequestID() string {
 	return hex.EncodeToString(b)
 }
 
+// sanitizeRequestID strips non-printable characters from a request ID and truncates to 128 chars.
+func sanitizeRequestID(id string) string {
+	if len(id) > 128 {
+		id = id[:128]
+	}
+	var buf strings.Builder
+	for _, c := range id {
+		if c >= 0x20 && c <= 0x7E {
+			buf.WriteRune(c)
+		}
+	}
+	return buf.String()
+}
+
 // requestIDMiddleware injects a request ID into the response and logger context.
 // It also parses the W3C traceparent header for log correlation and downstream forwarding.
 func requestIDMiddleware(next http.Handler) http.Handler {
@@ -111,6 +125,11 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 		id := r.Header.Get("X-Request-Id")
 		if id == "" {
 			id = generateRequestID()
+		} else {
+			id = sanitizeRequestID(id)
+			if id == "" {
+				id = generateRequestID()
+			}
 		}
 		w.Header().Set("X-Request-Id", id)
 

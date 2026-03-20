@@ -630,6 +630,61 @@ func TestTracingMiddleware_CreatesSpan(t *testing.T) {
 	}
 }
 
+func TestRequestIDMiddleware_TruncatesLongHeader(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+	agg := newTestAgg(t, backend.URL)
+	addr, cancel := startServer(t, agg)
+	defer cancel()
+
+	longID := strings.Repeat("a", 10000)
+	req, _ := http.NewRequest("GET", "http://"+addr+"/metrics", nil)
+	req.Header.Set("X-Request-Id", longID)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	id := resp.Header.Get("X-Request-Id")
+	if len(id) > 128 {
+		t.Fatalf("expected X-Request-Id to be truncated to 128, got len=%d", len(id))
+	}
+}
+
+func TestRequestIDMiddleware_StripsNonPrintable(t *testing.T) {
+	// Use httptest.NewRecorder directly to bypass Go HTTP client header validation
+	handler := requestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	req.Header["X-Request-Id"] = []string{"abc\x00\x01def"} // bypass header validation
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	id := rec.Header().Get("X-Request-Id")
+	for _, c := range id {
+		if c < 0x20 || c > 0x7E {
+			t.Fatalf("X-Request-Id contains non-printable char 0x%02x: %q", c, id)
+		}
+	}
+}
+
+func TestRequestIDMiddleware_FallbackOnAllNonPrintable(t *testing.T) {
+	// Use httptest.NewRecorder directly to bypass Go HTTP client header validation
+	handler := requestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	req.Header["X-Request-Id"] = []string{"\x00\x01\x02"} // bypass header validation
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	id := rec.Header().Get("X-Request-Id")
+	if len(id) != 32 {
+		t.Fatalf("expected fallback 32-char hex ID, got %q (len=%d)", id, len(id))
+	}
+}
+
 func TestTracingMiddleware_NoopWhenDisabled(t *testing.T) {
 	// Don't set up any TracerProvider — use default no-op
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
