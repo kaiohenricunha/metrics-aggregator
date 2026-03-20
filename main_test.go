@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -682,6 +683,49 @@ func TestRequestIDMiddleware_FallbackOnAllNonPrintable(t *testing.T) {
 	id := rec.Header().Get("X-Request-Id")
 	if len(id) != 32 {
 		t.Fatalf("expected fallback 32-char hex ID, got %q (len=%d)", id, len(id))
+	}
+}
+
+func TestRun_BindAddressRespected(t *testing.T) {
+	t.Setenv("METRICS_BIND_ADDRESS", "127.0.0.1")
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("up 1\n"))
+	}))
+	defer backend.Close()
+	agg := newTestAgg(t, backend.URL)
+
+	// Use a free port on 127.0.0.1
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
+	l.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		if err := run(ctx, agg, "127.0.0.1:"+port); err != nil {
+			t.Logf("run error: %v", err)
+		}
+	}()
+	// Wait for server to start
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 50*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	resp, err := http.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 }
 
