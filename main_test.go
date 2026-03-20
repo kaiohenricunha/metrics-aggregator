@@ -686,6 +686,30 @@ func TestRequestIDMiddleware_FallbackOnAllNonPrintable(t *testing.T) {
 	}
 }
 
+func TestParseDurationEnv_NegativeUsesDefault(t *testing.T) {
+	t.Setenv("TEST_DUR_ENV", "-5s")
+	got := parseDurationEnv("TEST_DUR_ENV", 10*time.Second)
+	if got != 10*time.Second {
+		t.Fatalf("expected default 10s for negative duration, got %s", got)
+	}
+}
+
+func TestParsePositiveIntEnv_ZeroUsesDefault(t *testing.T) {
+	t.Setenv("TEST_INT_ENV", "0")
+	got := parsePositiveIntEnv("TEST_INT_ENV", 42)
+	if got != 42 {
+		t.Fatalf("expected default 42 for zero, got %d", got)
+	}
+}
+
+func TestParsePositiveIntEnv_NegativeUsesDefault(t *testing.T) {
+	t.Setenv("TEST_INT_ENV", "-1")
+	got := parsePositiveIntEnv("TEST_INT_ENV", 42)
+	if got != 42 {
+		t.Fatalf("expected default 42 for negative, got %d", got)
+	}
+}
+
 func TestMetricsHandler_BuildInfo(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("up 1\n"))
