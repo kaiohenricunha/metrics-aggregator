@@ -12,7 +12,7 @@ GO_VERSION ?= $(shell awk '/^go / {print $$2}' go.mod)
 
 COMPOSE_ENV = AGG_PORT=$(AGG_PORT) PROM_PORT=$(PROM_PORT) PROM1_EXT=$(PROM1_EXT) PROM2_EXT=$(PROM2_EXT) GO_VERSION=$(GO_VERSION)
 
-.PHONY: help tools-install tools-install-ls build test test-one test-race cover-html fmt vet tidy lint vulncheck check compose-config compose-up compose-down smoke e2e e2e-up e2e-keep e2e-clean
+.PHONY: help tools-install tools-install-ls build test test-one test-race cover-html fmt vet tidy lint vulncheck check compose-config compose-up compose-down smoke e2e e2e-up e2e-keep e2e-clean claude-coverage-report claude-check
 
 help:
 	@printf "%s\n" \
@@ -34,7 +34,9 @@ help:
 	"make e2e                        # K8s e2e tests via kind, includes Istio (~8-10 min)" \
 	"make e2e-up                     # create kind cluster + load image (no tests)" \
 	"make e2e-keep                   # K8s e2e, keep cluster for debugging" \
-	"make e2e-clean                  # delete e2e kind cluster"
+	"make e2e-clean                  # delete e2e kind cluster" \
+	"make claude-coverage-report     # run tests + generate coverage summary via Claude (headless)" \
+	"make claude-check               # run /check and summarise failures via Claude (headless)"
 
 tools-install:
 	mkdir -p "$(GOBIN)"
@@ -126,3 +128,9 @@ smoke:
 	grep -q 'metrics_aggregator_scrape_success' /tmp/metrics.txt; \
 	curl -fs "http://localhost:$(PROM1_EXT)/-/healthy" >/dev/null; \
 	curl -fs "http://localhost:$(PROM2_EXT)/-/healthy" >/dev/null
+
+claude-coverage-report:	## Run tests + generate coverage summary via Claude (headless)
+	claude --print "Run make test-race to generate cover.out, then run make cover-html, then summarise which functions in pkg/aggregator have the lowest coverage and why they matter" 2>&1 | tee coverage-report.txt
+
+claude-check:	## Run make check and summarise any failures via Claude (headless)
+	claude --print "Run make check. If it passes, confirm all checks green. If any step fails, identify the root cause and suggest the minimal fix needed." 2>&1 | tee check-report.txt
