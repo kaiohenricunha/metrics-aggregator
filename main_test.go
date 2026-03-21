@@ -898,9 +898,14 @@ func TestPortValidation_Valid(t *testing.T) {
 }
 
 func TestPortValidation_LeadingTrailingSpaces(t *testing.T) {
+	// validatePort rejects embedded spaces — trimming is required before the call.
+	if _, err := validatePort(" 9090 "); err == nil {
+		t.Fatal("expected validatePort to reject untrimmed input, but it accepted it")
+	}
+	// After TrimSpace (as done in main()), the value must be accepted.
 	p, err := validatePort(strings.TrimSpace(" 9090 "))
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected error after trimming: %v", err)
 	}
 	if p != "9090" {
 		t.Fatalf("expected '9090', got %q", p)

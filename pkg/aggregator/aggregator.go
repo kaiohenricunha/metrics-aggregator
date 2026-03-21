@@ -127,7 +127,11 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("TLS configuration error: %w", err)
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok || defaultTransport == nil {
+		return nil, fmt.Errorf("http.DefaultTransport is not a *http.Transport; cannot build scrape client")
+	}
+	transport := defaultTransport.Clone()
 	transport.TLSClientConfig = tlsCfg
 	client := &http.Client{
 		Timeout:   5 * time.Second,
