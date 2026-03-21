@@ -167,10 +167,19 @@ ensure_promtool() {
   local checksum_url="${base_url}/sha256sums.txt"
   local tmp_tar; tmp_tar="$(mktemp /tmp/promtool-XXXXXX.tar.gz)"
   local tmp_sums; tmp_sums="$(mktemp /tmp/promtool-sums-XXXXXX.txt)"
-  curl -sL "$url" -o "$tmp_tar"
-  curl -sL "$checksum_url" -o "$tmp_sums"
-  # Verify checksum — extract the line for this tarball and check
-  if ! grep "${tarball}" "$tmp_sums" | sed "s|${tarball}|${tmp_tar}|" | sha256sum -c --status; then
+  curl -fsSL "$url" -o "$tmp_tar"
+  curl -fsSL "$checksum_url" -o "$tmp_sums"
+  # Verify checksum — locate the tarball entry and verify it explicitly
+  local checksum_line
+  checksum_line="$(awk -v t="$tarball" '$2 == t { print; exit }' "$tmp_sums")"
+  if [[ -z "$checksum_line" ]]; then
+    echo "ERROR: checksum entry for ${tarball} not found in sha256sums.txt" >&2
+    rm -f "$tmp_tar" "$tmp_sums"
+    return 1
+  fi
+  local expected
+  expected="$(printf '%s\n' "$checksum_line" | awk '{print $1}')"
+  if ! printf '%s  %s\n' "$expected" "$tmp_tar" | sha256sum -c --status; then
     echo "ERROR: checksum verification failed for ${tarball}" >&2
     rm -f "$tmp_tar" "$tmp_sums"
     return 1
@@ -203,8 +212,8 @@ ensure_istioctl() {
   local checksum_url="${base_url}/${tarball}.sha256"
   local tmp_tar; tmp_tar="$(mktemp /tmp/istioctl-XXXXXX.tar.gz)"
   local tmp_sum; tmp_sum="$(mktemp /tmp/istioctl-sum-XXXXXX.txt)"
-  curl -sL "$url" -o "$tmp_tar"
-  curl -sL "$checksum_url" -o "$tmp_sum"
+  curl -fsSL "$url" -o "$tmp_tar"
+  curl -fsSL "$checksum_url" -o "$tmp_sum"
   # Verify checksum — the .sha256 file contains just the hex digest
   local expected; expected="$(cat "$tmp_sum" | awk '{print $1}')"
   local actual; actual="$(sha256sum "$tmp_tar" | awk '{print $1}')"

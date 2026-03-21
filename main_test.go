@@ -897,6 +897,16 @@ func TestPortValidation_Valid(t *testing.T) {
 	}
 }
 
+func TestPortValidation_LeadingTrailingSpaces(t *testing.T) {
+	p, err := validatePort(strings.TrimSpace(" 9090 "))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p != "9090" {
+		t.Fatalf("expected '9090', got %q", p)
+	}
+}
+
 func TestTracingMiddleware_NoopWhenDisabled(t *testing.T) {
 	// Don't set up any TracerProvider — use default no-op
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

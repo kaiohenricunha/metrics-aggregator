@@ -1011,7 +1011,7 @@ func TestAggregateMetrics_HTTPSEndpoint(t *testing.T) {
 	}
 }
 
-func TestBuildTLSConfig_DefaultsToNil(t *testing.T) {
+func TestBuildTLSConfig_DefaultsTLS12(t *testing.T) {
 	t.Setenv("METRICS_SCRAPE_TLS_CACERT", "")
 	t.Setenv("METRICS_SCRAPE_TLS_CERT", "")
 	t.Setenv("METRICS_SCRAPE_TLS_KEY", "")
@@ -1068,6 +1068,25 @@ func TestBuildTLSConfig_InsecureSkipVerify(t *testing.T) {
 	}
 	if !cfg.InsecureSkipVerify {
 		t.Fatal("expected InsecureSkipVerify=true")
+	}
+}
+
+func TestBuildTLSConfig_InsecureSkipVerify_LogsWarning(t *testing.T) {
+	t.Setenv("METRICS_SCRAPE_TLS_CACERT", "")
+	t.Setenv("METRICS_SCRAPE_TLS_CERT", "")
+	t.Setenv("METRICS_SCRAPE_TLS_KEY", "")
+	t.Setenv("METRICS_SCRAPE_TLS_INSECURE_SKIP_VERIFY", "true")
+
+	var buf bytes.Buffer
+	origLogger := log.Logger
+	log.Logger = zerolog.New(&buf)
+	defer func() { log.Logger = origLogger }()
+
+	if _, err := BuildTLSConfig(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "TLS certificate verification disabled") {
+		t.Fatalf("expected warning about TLS verification disabled, got: %s", buf.String())
 	}
 }
 

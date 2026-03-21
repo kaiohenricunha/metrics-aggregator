@@ -127,9 +127,8 @@ func NewAggregator(endpointsConfig string) (*Aggregator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("TLS configuration error: %w", err)
 	}
-	transport := &http.Transport{
-		TLSClientConfig: tlsCfg,
-	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsCfg
 	client := &http.Client{
 		Timeout:   5 * time.Second,
 		Transport: transport,
@@ -457,7 +456,9 @@ func rejectLinkLocal(host string) error {
 		IP:   net.ParseIP("169.254.0.0"),
 		Mask: net.CIDRMask(16, 32),
 	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(context.Background(), hostname)
+	dnsCtx, dnsCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer dnsCancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(dnsCtx, hostname)
 	if err != nil {
 		// DNS failure — let the HTTP client handle it
 		return nil
