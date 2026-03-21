@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash /mnt/storage/Projects/kaiohenricunha/metrics-aggregator/.claude/hooks/container-rebuild-reminder.sh"
+            "command": "bash .claude/hooks/container-rebuild-reminder.sh"
           }
         ]
       }

@@ -478,14 +478,14 @@ func main() {
 		log.Fatal().Err(err).Msg("setup endpoints failed")
 	}
 
-	port := os.Getenv("METRICS_AGGREGATOR_PORT")
+	port := strings.TrimSpace(os.Getenv("METRICS_AGGREGATOR_PORT"))
 	if port == "" {
 		port = aggregator.DefaultAggregatorPort
 	}
 	if _, err := validatePort(port); err != nil {
 		log.Fatal().Err(err).Msg("invalid METRICS_AGGREGATOR_PORT")
 	}
-	bindAddr := os.Getenv("METRICS_BIND_ADDRESS")
+	bindAddr := strings.TrimSpace(os.Getenv("METRICS_BIND_ADDRESS"))
 	addr := bindAddr + ":" + port
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)

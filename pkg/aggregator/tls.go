@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
 // BuildTLSConfig constructs a *tls.Config from environment variables.
@@ -44,6 +46,7 @@ func BuildTLSConfig() (*tls.Config, error) {
 
 	if skipVerify == "true" {
 		cfg.InsecureSkipVerify = true // #nosec G402 -- controlled by explicit operator opt-in
+		log.Warn().Msg("METRICS_SCRAPE_TLS_INSECURE_SKIP_VERIFY=true: TLS certificate verification disabled")
 	}
 
 	return cfg, nil
