@@ -6,13 +6,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
 // Histogram is a thread-safe Prometheus histogram that emits exposition format.
 type Histogram struct {
-	bounds []float64      // sorted bucket boundaries (always ends with +Inf)
-	counts []atomic.Int64 // cumulative bucket counters, aligned with bounds
+	bounds []float64 // sorted bucket boundaries (always ends with +Inf)
+	counts []int64   // cumulative bucket counters, protected by mu
 	mu     sync.Mutex
 	sum    float64
 }
@@ -40,18 +39,18 @@ func NewHistogram(buckets []float64) *Histogram {
 
 	return &Histogram{
 		bounds: bounds,
-		counts: make([]atomic.Int64, len(bounds)),
+		counts: make([]int64, len(bounds)),
 	}
 }
 
 // Observe records a value in the histogram.
 func (h *Histogram) Observe(v float64) {
-	for i, b := range h.bounds {
-		if v <= b {
-			h.counts[i].Add(1)
-		}
-	}
+	// Use binary search to find the first bucket index where bounds[i] >= v.
+	idx := sort.SearchFloat64s(h.bounds, v)
 	h.mu.Lock()
+	for i := idx; i < len(h.counts); i++ {
+		h.counts[i]++
+	}
 	h.sum += v
 	h.mu.Unlock()
 }
@@ -59,7 +58,9 @@ func (h *Histogram) Observe(v float64) {
 // Count returns the total number of observations.
 // Derived from the +Inf bucket to stay consistent with RenderSamples output.
 func (h *Histogram) Count() int64 {
-	return h.counts[len(h.counts)-1].Load()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.counts[len(h.counts)-1]
 }
 
 // Sum returns the sum of all observed values.
@@ -78,19 +79,22 @@ func RenderHeader(name, help string) string {
 // labels is the inner label content (e.g. `endpoint="svc"`) without braces.
 func RenderSamples(name string, labels string, h *Histogram) string {
 	var b strings.Builder
+
+	// Take a single snapshot under mu to ensure atomicity across all buckets.
 	h.mu.Lock()
+	countsCopy := make([]int64, len(h.counts))
+	copy(countsCopy, h.counts)
 	sum := h.sum
 	h.mu.Unlock()
-	// Derive count from +Inf bucket so _count always equals the +Inf bucket value,
-	// satisfying the Prometheus histogram invariant even under concurrent Observe calls.
-	count := h.counts[len(h.counts)-1].Load()
+
+	count := countsCopy[len(countsCopy)-1]
 
 	for i, bound := range h.bounds {
 		le := formatLE(bound)
 		if labels == "" {
-			fmt.Fprintf(&b, "%s_bucket{le=%q} %d\n", name, le, h.counts[i].Load())
+			fmt.Fprintf(&b, "%s_bucket{le=%q} %d\n", name, le, countsCopy[i])
 		} else {
-			fmt.Fprintf(&b, "%s_bucket{%s,le=%q} %d\n", name, labels, le, h.counts[i].Load())
+			fmt.Fprintf(&b, "%s_bucket{%s,le=%q} %d\n", name, labels, le, countsCopy[i])
 		}
 	}
 	if labels == "" {
