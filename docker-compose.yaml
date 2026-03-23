@@ -14,7 +14,7 @@ services:
       - prometheus2
 
   prometheus1:
-    image: prom/prometheus:v3.3.0
+    image: prom/prometheus:v3.10.0
     ports:
       - "${PROM1_EXT}:${PROM_PORT}"
     environment:
@@ -23,7 +23,7 @@ services:
       - ./prometheus1.yml:/etc/prometheus/prometheus.yml
 
   prometheus2:
-    image: prom/prometheus:v3.3.0
+    image: prom/prometheus:v3.10.0
     ports:
       - "${PROM2_EXT}:${PROM_PORT}"
     environment:
