@@ -12,7 +12,7 @@ ARG COMMIT=unknown
 RUN CGO_ENABLED=0 go build -ldflags="-X main.version=${VERSION} -X main.commitSHA=${COMMIT}" -o metrics-aggregator .
 
 # ── Stage 2: final image ───────────────────────────────────────
-FROM alpine:3.20@sha256:a4f4213abb84c497377b8544c81b3564f313746700372ec4fe84653e4fb03805
+FROM alpine:3.24@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4
 ARG AGG_PORT=9090
 ENV AGG_PORT=$AGG_PORT
 RUN addgroup -S app && adduser -S -D -H -h /nonexistent -s /sbin/nologin -G app -u 10001 app
