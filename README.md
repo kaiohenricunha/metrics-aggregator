@@ -188,7 +188,61 @@ The aggregator needs no Kubernetes Service to function — it works entirely wit
 
 ## Why this exists
 
-Istio's built-in metrics-merge only supports one metrics port per pod, which breaks multi-container pods where each container exposes its own `/metrics`. The metrics-aggregator solves this by scraping all containers and serving a single merged endpoint. See [Prometheus, Istio, and mTLS](https://superorbital.io/blog/istio-metrics-merging/) for background. It's equally useful outside Istio for any scenario where you need to merge metrics from multiple containers.
+Istio's built-in metrics-merge historically supported only one metrics port per pod, which broke multi-container pods where each container exposes its own `/metrics`. The metrics-aggregator solves this by scraping all containers and serving a single merged endpoint. See [Prometheus, Istio, and mTLS](https://superorbital.io/blog/istio-metrics-merging/) for background. It's equally useful outside Istio for any scenario where you need to merge metrics from multiple containers.
+
+**Istio 1.31 added native multi-target metrics merging.** The `prometheus.istio.io/scrape-targets` annotation lets a pod declare more than one `port:path` endpoint and have Istio's own pilot-agent scrape and merge them, no sidecar required. I implemented this upstream: [istio/istio#59567](https://github.com/istio/istio/issues/59567), shipped via [#59924](https://github.com/istio/istio/pull/59924), [#59925](https://github.com/istio/istio/pull/59925), and [#60468](https://github.com/istio/istio/pull/60468). If you're on Istio 1.31 or later, evaluate the native annotation first; see [Migrating to Istio 1.31+](#migrating-to-istio-131) below. This project is still useful for the cases in [When is this project still useful?](#when-is-this-project-still-useful) that the native feature doesn't cover.
+
+### When is this project still useful?
+
+- **Istio versions before 1.31.** The `prometheus.istio.io/scrape-targets` annotation doesn't exist on 1.30 and earlier; metrics-aggregator works on any Istio version, including older ones still on 1.30 or the 1.2x LTS lines.
+- **No service mesh at all.** metrics-aggregator is a plain sidecar with no Istio dependency; it works in any pod on any Kubernetes cluster, with or without a mesh.
+- **Duplicate metric names across containers.** Istio's native merging concatenates each target's raw response and does not deduplicate. If two containers expose the same metric family name, Prometheus fails to parse the merged response. This is [documented, tested behavior](https://github.com/istio/istio/blob/master/pilot/cmd/pilot-agent/status/server_test.go) upstream, not a bug. metrics-aggregator strips `# TYPE`/`# HELP` metadata lines from every scraped endpoint before merging (`pkg/aggregator/aggregator.go`), which avoids the duplicate-declaration parse error for that specific case.
+- **Per-endpoint self-instrumentation.** metrics-aggregator exposes `scrape_success`, `scrape_duration_seconds`, `scrape_errors_total`, and `scrape_invalid_samples` per endpoint. Istio's native agent only exposes one aggregate counter, `istio_agent_scrape_failures_total{type="application"}`, with no per-target duration or success gauge.
+- **OpenTelemetry tracing.** metrics-aggregator can emit OTLP traces per scrape (`OTEL_TRACES_EXPORTER=otlp`). Istio's native merging has no tracing integration.
+- **Shipped Grafana dashboard and alerting rules.** `grafana-dashboard.json` and `alerts.rules.yml` are maintained in this repo. Istio's native feature ships no dashboards or alerts of its own.
+
+### Migrating to Istio 1.31+
+
+If none of the above apply to you, you can likely drop the sidecar.
+
+**Before** (metrics-aggregator sidecar):
+
+```yaml
+metadata:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+spec:
+  containers:
+    - name: metrics-aggregator
+      image: ghcr.io/kaiohenricunha/metrics-aggregator:latest
+      ports:
+        - containerPort: 9090
+      env:
+        - name: METRICS_ENDPOINTS
+          value: '{"api":"http://localhost:8080/metrics","worker":"http://localhost:9100/metrics"}'
+    - name: api
+      # exposes metrics on :8080/metrics
+    - name: worker
+      # exposes metrics on :9100/metrics
+```
+
+**After** (native Istio 1.31+ annotation, no extra container):
+
+```yaml
+metadata:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.istio.io/scrape-targets: "8080:/metrics,9100:/metrics"
+spec:
+  containers:
+    - name: api
+      # exposes metrics on :8080/metrics
+    - name: worker
+      # exposes metrics on :9100/metrics
+```
+
+Istio still rewrites `prometheus.io/port`/`path` to point Prometheus at the agent (`:15020/stats/prometheus`); that part is unchanged. The `scrape-targets` value is a comma-separated list of `port:path` pairs, an omitted path defaults to `/metrics`, and target ports can't collide with Istio's own reserved data-plane ports (15000, 15001, 15004, 15006, 15008, 15020, 15021, 15053, 15090). A failed target doesn't block the others: the merge still returns 200 with the remaining targets' data, and the failure is counted in `istio_agent_scrape_failures_total{type="application"}`. See the [Prometheus integration docs](https://istio.io/latest/docs/ops/integrations/prometheus/#option-1-metrics-merging) for the full behavior.
 
 ## Development
 
