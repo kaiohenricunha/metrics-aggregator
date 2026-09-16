@@ -1,7 +1,7 @@
 # ── Stage 1: build ──────────────────────────────────────────────
-ARG GO_VERSION=1.26.1         # <── default
+ARG GO_VERSION=1.27.1         # <── default
 # NOTE: GO_VERSION arg is informational only — the digest pin is authoritative.
-FROM golang:${GO_VERSION}-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 AS builder
+FROM golang:${GO_VERSION}-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
 WORKDIR /app
 RUN apk add --no-cache git
 COPY go.mod go.sum ./

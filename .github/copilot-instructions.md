@@ -2,23 +2,23 @@
 
 ## Go Toolchain (gvm)
 
-This project requires **Go 1.26**. The local toolchain is managed with [gvm](https://github.com/moovweb/gvm).
+This project requires **Go 1.27**. The local toolchain is managed with [gvm](https://github.com/moovweb/gvm).
 
 ```bash
 # Activate gvm (already sourced in the default shell profile)
 source ~/.gvm/scripts/gvm
 
 # Install the project Go version (first time only)
-gvm install go1.26.1
+gvm install go1.27.1
 
 # Switch to it (--default persists across new shells)
-gvm use go1.26.1 --default
+gvm use go1.27.1 --default
 
 # Verify
-go version   # should print go1.26.1
+go version   # should print go1.27.1
 
-# List available 1.26.x patch releases
-gvm listall | grep "^   go1\.26"
+# List available 1.27.x patch releases
+gvm listall | grep "^   go1\.27"
 ```
 
 After installing or switching versions run `go mod tidy` to keep `go.sum` consistent. When bumping Go: update `go.mod` (`go X.Y`) and `Dockerfile` (`ARG GO_VERSION=X.Y`).

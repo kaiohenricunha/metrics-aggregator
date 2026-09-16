@@ -11,7 +11,7 @@ Thanks for taking the time to contribute. This guide covers everything you need 
 ## Development setup
 
 ```bash
-# Prerequisites: Go 1.26+, Docker, kind (for E2E)
+# Prerequisites: Go 1.27+, Docker, kind (for E2E)
 git clone https://github.com/kaiohenricunha/metrics-aggregator.git
 cd metrics-aggregator
 

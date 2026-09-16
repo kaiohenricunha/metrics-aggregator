@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Go Toolchain (gvm)
 
-This project uses **Go 1.26**. The local toolchain is managed with [gvm](https://github.com/moovweb/gvm).
+This project uses **Go 1.27**. The local toolchain is managed with [gvm](https://github.com/moovweb/gvm).
 
 ```bash
 # Activate gvm in the current shell (already done if using the default shell profile)
@@ -18,13 +18,13 @@ source ~/.gvm/scripts/gvm
 gvm list
 
 # Install the current project version (first time only)
-gvm install go1.26.1
+gvm install go1.27.1
 
 # Switch to it (--default persists across new shells)
-gvm use go1.26.1 --default
+gvm use go1.27.1 --default
 
 # Find the latest patch for any minor
-gvm listall | grep "^   go1\.26"
+gvm listall | grep "^   go1\.27"
 ```
 
 When bumping Go: update `go.mod` (`go X.Y`), `Dockerfile` (`ARG GO_VERSION=X.Y`), and the `go` directive in `go.mod`. Run `go mod tidy` after switching.
